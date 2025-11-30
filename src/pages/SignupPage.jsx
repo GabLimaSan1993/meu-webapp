@@ -1,84 +1,156 @@
-import { useState } from 'react';
-import { supabase } from '../lib/supabaseClient';
-import { useNavigate, Link } from 'react-router-dom';
+import { useState } from "react";
+import { supabase } from "../lib/supabaseClient";
+import { Link, useNavigate } from "react-router-dom";
+import xchangeLogo from "../assets/xchange-logo.png"; // ajuste conforme seu caminho real
 
 function SignupPage() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const navigate = useNavigate();
 
-  async function handleSignup(e) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSignup = async (e) => {
     e.preventDefault();
+    setErrorMsg("");
+    setLoading(true);
 
     const { error } = await supabase.auth.signUp({
       email,
       password,
     });
 
+    setLoading(false);
+
     if (error) {
-      alert('Erro ao criar usuário: ' + error.message);
+      setErrorMsg(error.message);
       return;
     }
 
-    alert('Conta criada! Agora faça login.');
-    navigate('/');
-  }
+    navigate("/login");
+  };
 
   return (
-    <div style={container}>
-      <h1 style={title}>Criar conta</h1>
+    <div
+      style={{
+        minHeight: "100vh",
+        width: "100%",
+        background: "#000", // FUNDO PRETO
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "1rem",
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          maxWidth: "480px",
+          background: "rgba(0,0,0,0.65)",
+          borderRadius: "1rem",
+          padding: "2.5rem 2rem",
+          border: "1px solid rgba(255,255,255,0.08)",
+          boxShadow: "0 0 60px rgba(0,0,0,0.8)",
+        }}
+      >
+        {/* Logo XChange */}
+        <div style={{ textAlign: "center", marginBottom: "1.5rem" }}>
+          <img
+            src={xchangeLogo}
+            alt="XChange Logo"
+            style={{ width: "150px", marginBottom: "0.5rem" }}
+          />
+        </div>
 
-      <form onSubmit={handleSignup} style={form}>
-        <input
-          type="email"
-          placeholder="Seu e-mail"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          style={input}
-        />
-        <input
-          type="password"
-          placeholder="Sua senha"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={input}
-        />
+        <h2 style={{ fontSize: "1.5rem", fontWeight: "600", marginBottom: "1rem", color: "white" }}>
+          Criar conta
+        </h2>
 
-        <button type="submit" style={button}>
-          Cadastrar
-        </button>
-      </form>
+        <p style={{ fontSize: "0.9rem", color: "#9ca3af", marginBottom: "1.5rem" }}>
+          Preencha os dados abaixo para criar seu acesso.
+        </p>
 
-      <p style={{ marginTop: '10px', color: '#bbb' }}>
-        Já tem conta? <Link to="/">Entrar</Link>
-      </p>
+        <form onSubmit={handleSignup} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+          <div>
+            <label style={{ display: "block", marginBottom: "0.35rem", fontSize: "0.9rem" }}>
+              E-mail
+            </label>
+            <input
+              type="email"
+              value={email}
+              placeholder="voce@empresa.com"
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              style={{
+                width: "100%",
+                padding: "0.75rem",
+                borderRadius: "0.6rem",
+                border: "1px solid #1f2937",
+                background: "#0a0a0a",
+                color: "white",
+              }}
+            />
+          </div>
+
+          <div>
+            <label style={{ display: "block", marginBottom: "0.35rem", fontSize: "0.9rem" }}>
+              Senha
+            </label>
+            <input
+              type="password"
+              value={password}
+              placeholder="Sua senha"
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              style={{
+                width: "100%",
+                padding: "0.75rem",
+                borderRadius: "0.6rem",
+                border: "1px solid #1f2937",
+                background: "#0a0a0a",
+                color: "white",
+              }}
+            />
+          </div>
+
+          {errorMsg && (
+            <p style={{ color: "#f87171", fontSize: "0.85rem" }}>{errorMsg}</p>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            style={{
+              marginTop: "0.5rem",
+              width: "100%",
+              background:
+                "linear-gradient(135deg, #d1d5db, #f3f4f6)", // BOTÃO PRATA
+              color: "black",
+              border: "none",
+              padding: "0.75rem",
+              borderRadius: "0.6rem",
+              fontWeight: "600",
+              cursor: "pointer",
+            }}
+          >
+            {loading ? "Carregando..." : "Criar conta"}
+          </button>
+        </form>
+
+        <p style={{ marginTop: "1.5rem", textAlign: "center", color: "#ccc" }}>
+          Já tem conta?{" "}
+          <Link to="/login" style={{ color: "#facc15", textDecoration: "none", fontWeight: "600" }}>
+            Entrar
+          </Link>
+        </p>
+
+        <p style={{ textAlign: "center", fontSize: "0.75rem", marginTop: "2rem", color: "#aaa" }}>
+          © 2025 XChange. Todos os direitos reservados.
+        </p>
+      </div>
     </div>
   );
 }
-
-const container = {
-  minHeight: '100vh',
-  background: '#0f172a',
-  color: 'white',
-  display: 'flex',
-  flexDirection: 'column',
-  alignItems: 'center',
-  justifyContent: 'center',
-};
-const title = { fontSize: '2rem', marginBottom: '1rem' };
-const form = { display: 'flex', flexDirection: 'column', gap: '10px', width: '260px' };
-const input = {
-  padding: '10px',
-  borderRadius: '8px',
-  border: '1px solid #475569',
-};
-const button = {
-  padding: '10px',
-  borderRadius: '8px',
-  background: '#4ade80',
-  border: 'none',
-  fontWeight: 'bold',
-  cursor: 'pointer',
-};
 
 export default SignupPage;
