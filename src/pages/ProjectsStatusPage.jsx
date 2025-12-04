@@ -69,7 +69,6 @@ function formatPhone(phone) {
     return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
   }
 
-  // Se não bater 10/11 dígitos, devolve como veio
   return phone;
 }
 
@@ -100,7 +99,7 @@ function ProjectsStatusPage() {
   const navigate = useNavigate();
 
   const [user, setUser] = useState(null);
-  const [userName, setUserName] = useState(null); // vindo de profiles.name
+  const [userName, setUserName] = useState(null); // vindo de profiles.nome
 
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -137,18 +136,17 @@ function ProjectsStatusPage() {
       const currentUser = data.user;
       setUser(currentUser);
 
-      // Busca nome na tabela profiles
       try {
         const { data: profile, error: profileError } = await supabase
           .from("profiles")
-          .select("name")
-          .eq("id", currentUser.id)
+          .select("nome")
+          .eq("user_id", currentUser.id)
           .single();
 
         if (profileError) {
           console.error("Erro ao carregar profile:", profileError);
-        } else if (profile?.name) {
-          setUserName(profile.name);
+        } else if (profile?.nome) {
+          setUserName(profile.nome);
         }
       } catch (e) {
         console.error("Erro inesperado ao carregar profile:", e);
@@ -172,7 +170,6 @@ function ProjectsStatusPage() {
         const { data, error } = await supabase
           .from("projects")
           .select("*")
-          // manager_id ou consultant_to iguais ao usuário logado
           .or(`manager_id.eq.${user.id},consultant_to.eq.${user.id}`);
 
         if (error) {
@@ -205,7 +202,6 @@ function ProjectsStatusPage() {
         after_data: afterData || null,
       });
     } catch (logError) {
-      // Não quebra a tela se o log falhar, só registra no console
       console.error("Erro ao registrar log de projeto:", logError);
     }
   }
@@ -284,13 +280,9 @@ function ProjectsStatusPage() {
           return;
         }
 
-        // Atualiza lista em memória
-        setProjects((prev) =>
-          prev.map((p) => (p.id === data.id ? data : p))
-        );
+        setProjects((prev) => prev.map((p) => (p.id === data.id ? data : p)));
 
-        // Log
-        registerProjectLog("update", beforeData, data);
+        await registerProjectLog("update", beforeData, data);
       } else {
         // ===== INSERT =====
         const payloadInsert = {
@@ -313,14 +305,11 @@ function ProjectsStatusPage() {
           return;
         }
 
-        // adiciona no topo
         setProjects((prev) => [data, ...prev]);
 
-        // Log
-        registerProjectLog("create", null, data);
+        await registerProjectLog("create", null, data);
       }
 
-      // Limpa e fecha modal
       setEmpresa("");
       setResponsavel("");
       setTelefone("");
@@ -517,7 +506,7 @@ function ProjectsStatusPage() {
                       <div style={descricaoText}>{observacoes}</div>
                     </div>
 
-                    {/* Expectativa de investimento */}
+                    {/* Expectativa */}
                     <div style={{ ...tdCell, flex: 1 }}>
                       <div style={descricaoText}>{expectativa}</div>
                     </div>
@@ -792,7 +781,7 @@ const createButton = {
   padding: "0.6rem 1rem",
   borderRadius: "0.9rem",
   border: "none",
-  background: "linear-gradient(135deg, #facc15, #eab308)", // dourado
+  background: "linear-gradient(135deg, #facc15, #eab308)",
   color: "#111827",
   fontWeight: 600,
   fontSize: "0.85rem",
@@ -881,12 +870,10 @@ const errorBox = {
   marginBottom: "0.8rem",
 };
 
-/* ========= MODAL ========= */
-
 const modalOverlay = {
   position: "fixed",
   inset: 0,
-  backgroundColor: "rgba(0,0,0,0.7)",
+  backgroundColor: "rgba(0,0,0,0.75)",
   display: "flex",
   alignItems: "center",
   justifyContent: "center",
@@ -894,41 +881,39 @@ const modalOverlay = {
 };
 
 const modalContent = {
-  backgroundColor: "#020617",
-  borderRadius: "1rem",
-  border: "1px solid rgba(55,65,81,0.9)",
-  padding: "1rem",
   width: "100%",
   maxWidth: "720px",
-  boxShadow: "0 20px 60px rgba(0,0,0,0.9)",
+  backgroundColor: "#020617",
+  borderRadius: "1.1rem",
+  border: "1px solid rgba(55,65,81,0.9)",
+  boxShadow: "0 24px 60px rgba(0,0,0,1)",
+  padding: "1.2rem 1.3rem 1.1rem",
 };
 
 const modalHeader = {
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
-  marginBottom: "0.5rem",
+  marginBottom: "0.8rem",
 };
 
 const modalTitle = {
   fontSize: "1rem",
   fontWeight: 600,
-  margin: 0,
 };
 
 const modalCloseButton = {
-  border: "none",
   background: "transparent",
+  border: "none",
   color: "#9ca3af",
-  fontSize: "1.2rem",
+  fontSize: "1.4rem",
   cursor: "pointer",
 };
 
 const modalForm = {
   display: "grid",
   gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-  gap: "0.75rem 0.75rem",
-  marginTop: "0.5rem",
+  gap: "0.75rem",
 };
 
 const modalFooter = {
@@ -942,7 +927,7 @@ const modalFooter = {
 const modalCancelButton = {
   padding: "0.6rem 1rem",
   borderRadius: "0.9rem",
-  border: "1px solid rgba(75,85,99,0.9)",
+  border: "1px solid rgba(148,163,184,0.5)",
   backgroundColor: "transparent",
   color: "#e5e7eb",
   fontSize: "0.85rem",

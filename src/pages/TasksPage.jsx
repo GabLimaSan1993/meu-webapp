@@ -1,134 +1,22 @@
-// src/pages/ProjectsStatusPage.jsx
-import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+// src/pages/TasksPage.jsx
+import React, { useEffect, useState } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import xchangeLogo from "../assets/xchange-logo.png";
 
-// =========================
-// Helpers de visual
-// =========================
-function getStatusConfig(status) {
-  if (!status) {
-    return {
-      label: "Sem status",
-      bg: "rgba(148,163,184,0.12)",
-      border: "rgba(148,163,184,0.4)",
-      color: "#e5e7eb",
-    };
-  }
-
-  const normalized = String(status).toLowerCase();
-
-  if (normalized.includes("andamento")) {
-    return {
-      label: status,
-      bg: "rgba(34,197,94,0.12)",
-      border: "rgba(34,197,94,0.6)",
-      color: "#bbf7d0",
-    };
-  }
-
-  if (normalized.includes("análise") || normalized.includes("analise")) {
-    return {
-      label: status,
-      bg: "rgba(129,140,248,0.12)",
-      border: "rgba(129,140,248,0.6)",
-      color: "#c7d2fe",
-    };
-  }
-
-  if (normalized.includes("susp") || normalized.includes("hold")) {
-    return {
-      label: status,
-      bg: "rgba(248,113,113,0.12)",
-      border: "rgba(248,113,113,0.6)",
-      color: "#fecaca",
-    };
-  }
-
-  return {
-    label: status,
-    bg: "rgba(148,163,184,0.12)",
-    border: "rgba(148,163,184,0.4)",
-    color: "#e5e7eb",
-  };
-}
-
-function formatPhone(phone) {
-  if (!phone) return "—";
-  const digits = String(phone).replace(/\D/g, "");
-
-  if (digits.length === 11) {
-    return `(${digits.slice(0, 2)}) ${digits.slice(2, 3)} ${digits.slice(
-      3,
-      7
-    )}-${digits.slice(7)}`;
-  }
-
-  if (digits.length === 10) {
-    return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
-  }
-
-  // Se não bater 10/11 dígitos, devolve como veio
-  return phone;
-}
-
-function formatCurrency(value) {
-  if (value === null || value === undefined || value === "") return "—";
-
-  if (typeof value === "number") {
-    return value.toLocaleString("pt-BR", {
-      style: "currency",
-      currency: "BRL",
-    });
-  }
-
-  const cleaned = String(value).replace(/[^\d,-]/g, "").replace(",", ".");
-  const num = Number(cleaned);
-  if (Number.isNaN(num)) return String(value);
-
-  return num.toLocaleString("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  });
-}
-
-// =========================
-// Página principal
-// =========================
-function ProjectsStatusPage() {
+function TasksPage() {
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [user, setUser] = useState(null);
-  const [userName, setUserName] = useState(null); // vindo de profiles.name
-
+  const [userName, setUserName] = useState("");
   const [projects, setProjects] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [erro, setErro] = useState("");
+  const [loadingProjects, setLoadingProjects] = useState(false);
 
-  const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("todos");
-
-  // Formulário de novo/edição de projeto
-  const [empresa, setEmpresa] = useState("");
-  const [status, setStatus] = useState("Em Andamento");
-  const [responsavel, setResponsavel] = useState("");
-  const [telefone, setTelefone] = useState("");
-  const [produto, setProduto] = useState("");
-  const [observacoes, setObservacoes] = useState("");
-  const [expectativa, setExpectativa] = useState("");
-  const [salvandoProjeto, setSalvandoProjeto] = useState(false);
-
-  // Controle do modal e edição
-  const [showModal, setShowModal] = useState(false);
-  const [editingProject, setEditingProject] = useState(null); // null = novo
-
-  // ==========================
-  // Carregar usuário + perfil
-  // ==========================
   useEffect(() => {
-    async function loadUserAndProfile() {
+    async function loadUserAndData() {
       const { data, error } = await supabase.auth.getUser();
+
       if (error || !data.user) {
         navigate("/login");
         return;
@@ -137,816 +25,631 @@ function ProjectsStatusPage() {
       const currentUser = data.user;
       setUser(currentUser);
 
-      // Busca nome na tabela profiles
+      // Carrega nome na tabela profiles (campo "nome", chave "user_id")
       try {
         const { data: profile, error: profileError } = await supabase
           .from("profiles")
-          .select("name")
-          .eq("id", currentUser.id)
+          .select("nome")
+          .eq("user_id", currentUser.id)
           .single();
 
-        if (profileError) {
-          console.error("Erro ao carregar profile:", profileError);
-        } else if (profile?.name) {
-          setUserName(profile.name);
+        if (!profileError && profile?.nome) {
+          setUserName(profile.nome);
         }
       } catch (e) {
-        console.error("Erro inesperado ao carregar profile:", e);
+        console.error("Erro ao carregar profile:", e);
       }
-    }
 
-    loadUserAndProfile();
-  }, [navigate]);
-
-  // ==========================
-  // Carregar projetos
-  // ==========================
-  useEffect(() => {
-    if (!user) return;
-
-    async function loadProjects() {
-      setLoading(true);
-      setErro("");
-
+      // Carrega projetos associados ao usuário
       try {
-        const { data, error } = await supabase
+        setLoadingProjects(true);
+        const { data: projData, error: projError } = await supabase
           .from("projects")
           .select("*")
-          // manager_id ou consultant_to iguais ao usuário logado
-          .or(`manager_id.eq.${user.id},consultant_to.eq.${user.id}`);
+          .or(`manager_id.eq.${currentUser.id},consultant_to.eq.${currentUser.id}`)
+          .order("created_at", { ascending: false });
 
-        if (error) {
-          console.error("Erro ao buscar projetos:", error);
-          setErro("Erro ao carregar projetos. Veja o console.");
+        if (projError) {
+          console.error("Erro ao buscar projetos:", projError);
         } else {
-          setProjects(data || []);
+          setProjects(projData || []);
         }
       } catch (e) {
         console.error("Erro inesperado ao buscar projetos:", e);
-        setErro("Erro inesperado ao carregar projetos.");
       } finally {
-        setLoading(false);
+        setLoadingProjects(false);
       }
     }
 
-    loadProjects();
-  }, [user]);
+    loadUserAndData();
+  }, [navigate]);
 
-  // ==========================
-  // Log de alterações
-  // ==========================
-  async function registerProjectLog(changeType, beforeData, afterData) {
-    try {
-      await supabase.from("project_logs").insert({
-        project_id: afterData?.id || beforeData?.id || null,
-        user_id: user?.id || null,
-        change_type: changeType,
-        before_data: beforeData || null,
-        after_data: afterData || null,
-      });
-    } catch (logError) {
-      // Não quebra a tela se o log falhar, só registra no console
-      console.error("Erro ao registrar log de projeto:", logError);
-    }
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    navigate("/login");
   }
 
-  // ==========================
-  // Abrir/fechar modal
-  // ==========================
-  function openNewProjectModal() {
-    setEditingProject(null);
-    setEmpresa("");
-    setStatus("Em Andamento");
-    setResponsavel("");
-    setTelefone("");
-    setProduto("");
-    setObservacoes("");
-    setExpectativa("");
-    setShowModal(true);
-  }
+  const totalProjects = projects.length;
+  const activeProjects = projects.filter((p) => {
+    const s = (p.status || "").toLowerCase();
+    return (
+      s.includes("andamento") ||
+      s.includes("análise") ||
+      s.includes("analise")
+    );
+  }).length;
 
-  function openEditProjectModal(project) {
-    setEditingProject(project);
-    setEmpresa(project.title || "");
-    setStatus(project.status || "Em Andamento");
-    setResponsavel(project.socio || "");
-    setTelefone(project.telefone || "");
-    setProduto(project.produto || project.description || "");
-    setObservacoes(project.observacoes || "");
-    setExpectativa(project.expectativa_investimento || "");
-    setShowModal(true);
-  }
+  const mostRecentProject = projects[0] || null;
 
-  function closeModal() {
-    setShowModal(false);
-  }
+  const isRouteActive = (path) => location.pathname === path;
 
-  // ==========================
-  // Criar / atualizar projeto
-  // ==========================
-  async function handleSubmitProject(e) {
-    e.preventDefault();
-    if (!empresa.trim() || !user) return;
-
-    setSalvandoProjeto(true);
-    setErro("");
-
-    const basePayload = {
-      title: empresa.trim(),
-      status: status || null,
-      socio: responsavel.trim() || null,
-      telefone: telefone.trim() || null,
-      produto: produto.trim() || null,
-      observacoes: observacoes.trim() || null,
-      expectativa_investimento: expectativa.trim() || null,
-    };
-
-    try {
-      if (editingProject) {
-        // ===== UPDATE =====
-        const payloadUpdate = {
-          ...basePayload,
-        };
-
-        const beforeData = editingProject;
-
-        const { data, error } = await supabase
-          .from("projects")
-          .update(payloadUpdate)
-          .eq("id", editingProject.id)
-          .select()
-          .single();
-
-        if (error) {
-          console.error("Erro ao atualizar projeto:", error);
-          setErro("Erro ao atualizar projeto. Veja o console.");
-          setSalvandoProjeto(false);
-          return;
-        }
-
-        // Atualiza lista em memória
-        setProjects((prev) =>
-          prev.map((p) => (p.id === data.id ? data : p))
-        );
-
-        // Log
-        registerProjectLog("update", beforeData, data);
-      } else {
-        // ===== INSERT =====
-        const payloadInsert = {
-          ...basePayload,
-          criado_por: userName || user.email,
-          manager_id: user.id,
-          consultant_to: user.id,
-        };
-
-        const { data, error } = await supabase
-          .from("projects")
-          .insert(payloadInsert)
-          .select()
-          .single();
-
-        if (error) {
-          console.error("Erro ao criar projeto:", error);
-          setErro("Erro ao criar projeto. Veja o console.");
-          setSalvandoProjeto(false);
-          return;
-        }
-
-        // adiciona no topo
-        setProjects((prev) => [data, ...prev]);
-
-        // Log
-        registerProjectLog("create", null, data);
-      }
-
-      // Limpa e fecha modal
-      setEmpresa("");
-      setResponsavel("");
-      setTelefone("");
-      setProduto("");
-      setObservacoes("");
-      setExpectativa("");
-      setEditingProject(null);
-      setShowModal(false);
-    } catch (e2) {
-      console.error("Erro inesperado ao salvar projeto:", e2);
-      setErro("Erro inesperado ao salvar projeto.");
-    } finally {
-      setSalvandoProjeto(false);
-    }
-  }
-
-  // ==========================
-  // Filtro de busca e status
-  // ==========================
-  const filteredProjects = useMemo(() => {
-    return projects.filter((proj) => {
-      const texto = (
-        `${proj.title ?? ""} ${proj.socio ?? ""} ${
-          proj.produto ?? proj.description ?? ""
-        } ${proj.observacoes ?? ""}`
-      ).toLowerCase();
-
-      const buscaOk = texto.includes(search.toLowerCase());
-
-      const statusOk =
-        statusFilter === "todos" ||
-        (proj.status ?? "").toLowerCase() === statusFilter.toLowerCase();
-
-      return buscaOk && statusOk;
-    });
-  }, [projects, search, statusFilter]);
-
-  // ==========================
-  // Render
-  // ==========================
   return (
-    <div style={pageWrapper}>
-      {/* TOPO */}
-      <header style={header}>
-        <div style={logoArea}>
-          <img src={xchangeLogo} alt="XChange" style={logoImage} />
+    <div style={rootWrapper}>
+      {/* SIDEBAR */}
+      <aside style={sidebar}>
+        <div style={sidebarHeader}>
+          <img src={xchangeLogo} alt="XChange" style={sidebarLogoImg} />
           <div>
-            <h1 style={pageTitle}>Central de acompanhamento de projetos</h1>
-            <p style={pageSubtitle}>
-              Crie, edite e acompanhe seus projetos com visão estilo Notion.
-            </p>
+            <div style={sidebarBrandTitle}>XChange</div>
+            <div style={sidebarBrandSubtitle}>Painel de projetos</div>
           </div>
         </div>
 
-        <button style={backButton} onClick={() => navigate("/app")}>
-          ⬅ Voltar para tarefas
-        </button>
-      </header>
+        <nav style={sidebarNav}>
+          <Link
+            to="/app"
+            style={{
+              ...navItem,
+              ...(isRouteActive("/app") ? navItemActive : {}),
+            }}
+          >
+            Início
+          </Link>
 
-      {/* TOPO: BOTÃO + FILTROS */}
-      <section style={topRow}>
-        <div style={projectsHeroBox}>
-          <p style={heroLabel}>Projetos</p>
-          <h2 style={heroTitle}>Pipeline de oportunidades & projetos</h2>
-          <p style={heroText}>
-            Cadastre novas empresas, acompanhe status, responsáveis e
-            expectativas de investimento em um só lugar.
-          </p>
-          <button style={createButtonHero} onClick={openNewProjectModal}>
-            + Criar projeto
+          <Link
+            to="/projects/status"
+            style={{
+              ...navItem,
+              ...(isRouteActive("/projects/status") ? navItemActive : {}),
+            }}
+          >
+            Status dos projetos
+          </Link>
+
+          {/* Espaço para futuros itens de menu */}
+          <div style={navSectionLabel}>Módulos futuros</div>
+          <button style={navItemDisabled} type="button">
+            Tarefas & agenda
+          </button>
+          <button style={navItemDisabled} type="button">
+            Dashboards & uploads
+          </button>
+        </nav>
+
+        <div style={sidebarFooter}>
+          <div style={sidebarUserBox}>
+            <div style={sidebarUserName}>
+              {userName || "Consultor(a)"}
+            </div>
+            <div style={sidebarUserEmail}>{user?.email}</div>
+          </div>
+          <button style={sidebarLogoutButton} onClick={handleLogout}>
+            Sair
           </button>
         </div>
+      </aside>
 
-        <div style={filtersBox}>
-          <div style={{ marginBottom: "0.6rem" }}>
-            <label style={label}>Buscar</label>
-            <input
-              type="text"
-              placeholder="Empresa, responsável, produto..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              style={input}
-            />
-          </div>
-
+      {/* CONTEÚDO PRINCIPAL */}
+      <main style={mainWrapper}>
+        {/* TOPO – igual à imagem do “Painel do consultor” */}
+        <header style={header}>
           <div>
-            <label style={label}>Filtrar por status</label>
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              style={input}
-            >
-              <option value="todos">Todos</option>
-              <option value="Em Andamento">Em Andamento</option>
-              <option value="Em Análise">Em Análise</option>
-              <option value="Suspenso">Suspenso</option>
-              <option value="On Hold">On Hold</option>
-            </select>
+            <h1 style={headerTitle}>Painel do consultor</h1>
+            <p style={headerSubtitle}>
+              Organize suas tarefas e acesse o status dos projetos.
+            </p>
           </div>
-        </div>
-      </section>
 
-      {/* TABELA */}
-      <main style={cardWrapper}>
-        {erro && <div style={errorBox}>{erro}</div>}
+          <div style={headerUserBlock}>
+            <div style={headerUserEmail}>{user?.email}</div>
+            {userName && (
+              <div style={headerUserName}>{userName}</div>
+            )}
+          </div>
+        </header>
 
-        {loading ? (
-          <p style={{ color: "#9ca3af", fontSize: "0.9rem" }}>
-            Carregando projetos...
-          </p>
-        ) : filteredProjects.length === 0 ? (
-          <p style={{ color: "#9ca3af", fontSize: "0.9rem" }}>
-            Nenhum projeto encontrado com os filtros atuais.
-          </p>
-        ) : (
-          <div style={tableWrapper}>
-            {/* Cabeçalho */}
-            <div style={tableHeaderRow}>
-              <div style={{ ...thCell, flex: 1.3 }}>Empresa</div>
-              <div style={{ ...thCell, flex: 0.9 }}>Status</div>
-              <div style={{ ...thCell, flex: 1.1 }}>Responsável</div>
-              <div style={{ ...thCell, flex: 0.9 }}>Telefone</div>
-              <div style={{ ...thCell, flex: 1.2 }}>Produto</div>
-              <div style={{ ...thCell, flex: 1.4 }}>Observações</div>
-              <div style={{ ...thCell, flex: 1 }}>
-                Expectativa de investimento
+        {/* LINHA PRINCIPAL: RESUMO + PAINEL DO USUÁRIO */}
+        <section style={topGrid}>
+          {/* CARD ESQUERDO – RESUMO / CENTRAL DE ATIVIDADES */}
+          <div style={summaryCard}>
+            <p style={sectionLabel}>RESUMO</p>
+            <h2 style={summaryTitle}>Central de atividades</h2>
+            <p style={summaryText}>
+              Esta tela será a sua central de tarefas, agendas e entregáveis.
+              Por enquanto, use o botão abaixo para acessar o acompanhamento de
+              projetos e cadastrar/editar oportunidades.
+            </p>
+
+            <button
+              style={primaryButton}
+              type="button"
+              onClick={() => navigate("/projects/status")}
+            >
+              Ver status dos projetos
+            </button>
+          </div>
+
+          {/* CARD DIREITO – PAINEL DO USUÁRIO */}
+          <div style={userPanelWrapper}>
+            <p style={sectionLabel}>PAINEL DO USUÁRIO</p>
+
+            <div style={userPanelGrid}>
+              {/* TAREFAS */}
+              <div style={smallCard}>
+                <h3 style={smallCardTitle}>Tarefas</h3>
+                <p style={smallCardText}>
+                  Recurso de tarefas ainda não está configurado no banco.
+                </p>
               </div>
-              <div style={{ ...thCell, flex: 0.9 }}>Criado por</div>
-              <div style={{ ...thCell, flex: 0.8 }}>Criado em</div>
-            </div>
 
-            {/* Linhas */}
-            <div style={tableBody}>
-              {filteredProjects.map((proj) => {
-                const statusCfg = getStatusConfig(proj.status);
-                const criadoEm =
-                  proj.created_at &&
-                  new Date(proj.created_at).toLocaleDateString("pt-BR");
-
-                const produto = proj.produto || proj.description || "—";
-                const observacoes = proj.observacoes || "—";
-                const expectativa = formatCurrency(
-                  proj.expectativa_investimento
-                );
-                const criadoPor = proj.criado_por || "—";
-                const telefoneFmt = formatPhone(proj.telefone);
-
-                return (
-                  <div
-                    key={proj.id}
-                    style={tableRow}
-                    onClick={() => openEditProjectModal(proj)}
-                  >
-                    {/* Empresa */}
-                    <div style={{ ...tdCell, flex: 1.3 }}>
-                      <div style={empresaName}>{proj.title || "—"}</div>
-                    </div>
-
-                    {/* Status */}
-                    <div style={{ ...tdCell, flex: 0.9 }}>
-                      <span
-                        style={{
-                          display: "inline-flex",
-                          padding: "0.2rem 0.5rem",
-                          borderRadius: "999px",
-                          backgroundColor: statusCfg.bg,
-                          border: `1px solid ${statusCfg.border}`,
-                          color: statusCfg.color,
-                          fontSize: "0.75rem",
-                          fontWeight: 500,
-                        }}
-                      >
-                        {statusCfg.label}
+              {/* PROJETOS ASSOCIADOS */}
+              <div style={smallCard}>
+                <h3 style={smallCardTitle}>Projetos associados</h3>
+                {loadingProjects ? (
+                  <p style={smallCardText}>Carregando...</p>
+                ) : (
+                  <>
+                    <div style={projectsCountRow}>
+                      <span style={projectsCountNumber}>
+                        {totalProjects}
+                      </span>
+                      <span style={projectsCountLabel}>
+                        projetos no total
                       </span>
                     </div>
+                    <p style={projectsCountDetail}>
+                      {activeProjects} em andamento / análise
+                    </p>
 
-                    {/* Responsável */}
-                    <div style={{ ...tdCell, flex: 1.1 }}>
-                      <div style={empresaName}>{proj.socio || "—"}</div>
-                    </div>
+                    <button
+                      type="button"
+                      style={linkButton}
+                      onClick={() => navigate("/projects/status")}
+                    >
+                      Abrir módulo de projetos →
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
 
-                    {/* Telefone */}
-                    <div style={{ ...tdCell, flex: 0.9 }}>
-                      <span style={empresaSub}>{telefoneFmt}</span>
-                    </div>
+            {/* AGENDA DA SEMANA */}
+            <div style={agendaCard}>
+              <h3 style={smallCardTitle}>Agenda da semana</h3>
+              <p style={smallCardText}>
+                Integração futura com Outlook / calendário. Por enquanto, use
+                este resumo para organizar seus compromissos.
+              </p>
 
-                    {/* Produto */}
-                    <div style={{ ...tdCell, flex: 1.2 }}>
-                      <div style={descricaoText}>{produto}</div>
+              <div style={agendaList}>
+                {["QUI. • 04/12", "SEX. • 05/12", "SÁB. • 06/12", "DOM. • 07/12", "SEG. • 08/12"].map(
+                  (day) => (
+                    <div key={day} style={agendaRow}>
+                      <span style={agendaDay}>{day}</span>
+                      <span style={agendaInfo}>Sem eventos cadastrados</span>
                     </div>
-
-                    {/* Observações */}
-                    <div style={{ ...tdCell, flex: 1.4 }}>
-                      <div style={descricaoText}>{observacoes}</div>
-                    </div>
-
-                    {/* Expectativa de investimento */}
-                    <div style={{ ...tdCell, flex: 1 }}>
-                      <div style={descricaoText}>{expectativa}</div>
-                    </div>
-
-                    {/* Criado por */}
-                    <div style={{ ...tdCell, flex: 0.9 }}>
-                      <span style={empresaSub}>{criadoPor}</span>
-                    </div>
-
-                    {/* Criado em */}
-                    <div style={{ ...tdCell, flex: 0.8 }}>
-                      <span style={empresaSub}>{criadoEm || "—"}</span>
-                    </div>
-                  </div>
-                );
-              })}
+                  )
+                )}
+              </div>
             </div>
           </div>
-        )}
-      </main>
+        </section>
 
-      {/* MODAL DE NOVO / EDIÇÃO DE PROJETO */}
-      {showModal && (
-        <div style={modalOverlay}>
-          <div style={modalContent}>
-            <div style={modalHeader}>
-              <h3 style={modalTitle}>
-                {editingProject ? "Editar projeto" : "Novo projeto"}
-              </h3>
-              <button onClick={closeModal} style={modalCloseButton}>
-                ×
-              </button>
+        {/* PROJETOS RECENTES – faixa inferior */}
+        <section style={recentSection}>
+          <p style={sectionLabel}>PROJETOS RECENTES</p>
+
+          {loadingProjects ? (
+            <p style={summaryText}>Carregando projetos...</p>
+          ) : !mostRecentProject ? (
+            <div style={recentCard}>
+              <p style={summaryText}>
+                Nenhum projeto encontrado. Use o módulo de projetos para criar
+                novas oportunidades.
+              </p>
             </div>
+          ) : (
+            <div style={recentCard}>
+              <div style={recentProjectMain}>
+                <div>
+                  <div style={recentProjectTitle}>
+                    {mostRecentProject.title || "Projeto sem nome"}
+                  </div>
+                  <div style={recentProjectSubtitle}>
+                    {mostRecentProject.observacoes ||
+                      mostRecentProject.description ||
+                      "Sem observações cadastradas."}
+                  </div>
+                </div>
 
-            <form style={modalForm} onSubmit={handleSubmitProject}>
-              <div style={{ gridColumn: "1 / -1" }}>
-                <label style={label}>Empresa *</label>
-                <input
-                  type="text"
-                  value={empresa}
-                  onChange={(e) => setEmpresa(e.target.value)}
-                  placeholder="Nome da empresa"
-                  style={input}
-                  required
-                />
+                <div style={recentStatusPill}>
+                  {mostRecentProject.status || "Sem status"}
+                </div>
               </div>
 
-              <div>
-                <label style={label}>Status</label>
-                <select
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value)}
-                  style={input}
-                >
-                  <option value="Em Andamento">Em Andamento</option>
-                  <option value="Em Análise">Em Análise</option>
-                  <option value="Suspenso">Suspenso</option>
-                  <option value="On Hold">On Hold</option>
-                </select>
-              </div>
-
-              <div>
-                <label style={label}>Responsável</label>
-                <input
-                  type="text"
-                  value={responsavel}
-                  onChange={(e) => setResponsavel(e.target.value)}
-                  placeholder="Nome do responsável"
-                  style={input}
-                />
-              </div>
-
-              <div>
-                <label style={label}>Telefone</label>
-                <input
-                  type="text"
-                  value={telefone}
-                  onChange={(e) => setTelefone(e.target.value)}
-                  placeholder="(00) 00000-0000"
-                  style={input}
-                />
-              </div>
-
-              <div>
-                <label style={label}>Produto</label>
-                <input
-                  type="text"
-                  value={produto}
-                  onChange={(e) => setProduto(e.target.value)}
-                  placeholder="Produto / escopo"
-                  style={input}
-                />
-              </div>
-
-              <div style={{ gridColumn: "1 / -1" }}>
-                <label style={label}>Observações</label>
-                <textarea
-                  value={observacoes}
-                  onChange={(e) => setObservacoes(e.target.value)}
-                  placeholder="Comentários, pontos de atenção, etc."
-                  style={textarea}
-                  rows={2}
-                />
-              </div>
-
-              <div style={{ gridColumn: "1 / -1" }}>
-                <label style={label}>Expectativa de investimento</label>
-                <input
-                  type="text"
-                  value={expectativa}
-                  onChange={(e) => setExpectativa(e.target.value)}
-                  placeholder="Ex: 2000000 ou R$ 2.000.000,00"
-                  style={input}
-                />
-              </div>
-
-              <div style={modalFooter}>
+              <div style={recentProjectMeta}>
+                <span>
+                  Criado em{" "}
+                  {mostRecentProject.created_at
+                    ? new Date(
+                        mostRecentProject.created_at
+                      ).toLocaleDateString("pt-BR")
+                    : "—"}
+                </span>
                 <button
                   type="button"
-                  onClick={closeModal}
-                  style={modalCancelButton}
+                  style={linkButton}
+                  onClick={() => navigate("/projects/status")}
                 >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  style={createButton}
-                  disabled={salvandoProjeto || !empresa.trim()}
-                >
-                  {salvandoProjeto
-                    ? "Salvando..."
-                    : editingProject
-                    ? "Salvar alterações"
-                    : "Criar projeto"}
+                  Ver todos os projetos →
                 </button>
               </div>
-            </form>
-          </div>
-        </div>
-      )}
+            </div>
+          )}
+        </section>
+      </main>
     </div>
   );
 }
 
-/* ========= ESTILOS ========= */
+/* ======= ESTILOS ======= */
 
-const pageWrapper = {
+const rootWrapper = {
+  display: "flex",
   minHeight: "100vh",
-  width: "100%",
   backgroundColor: "#000000",
   color: "#e5e7eb",
-  padding: "1.5rem 2rem",
+  fontFamily: "system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
+};
+
+/* SIDEBAR */
+
+const sidebar = {
+  width: "250px",
+  backgroundColor: "#020617",
+  borderRight: "1px solid rgba(31,41,55,0.9)",
+  padding: "1.2rem 1rem",
   display: "flex",
   flexDirection: "column",
-  gap: "1rem",
+  gap: "1.2rem",
+};
+
+const sidebarHeader = {
+  display: "flex",
+  alignItems: "center",
+  gap: "0.6rem",
+  paddingBottom: "0.6rem",
+  borderBottom: "1px solid rgba(31,41,55,0.9)",
+};
+
+const sidebarLogoImg = {
+  height: "26px",
+  objectFit: "contain",
+};
+
+const sidebarBrandTitle = {
+  fontSize: "0.9rem",
+  fontWeight: 600,
+};
+
+const sidebarBrandSubtitle = {
+  fontSize: "0.75rem",
+  color: "#9ca3af",
+};
+
+const sidebarNav = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "0.35rem",
+  marginTop: "0.4rem",
+};
+
+const navItem = {
+  padding: "0.55rem 0.75rem",
+  borderRadius: "0.7rem",
+  fontSize: "0.85rem",
+  color: "#e5e7eb",
+  textDecoration: "none",
+  border: "1px solid transparent",
+  backgroundColor: "transparent",
+  textAlign: "left",
+  cursor: "pointer",
+};
+
+const navItemActive = {
+  background:
+    "linear-gradient(135deg, rgba(250,204,21,0.1), rgba(250,204,21,0.25))",
+  border: "1px solid rgba(250,204,21,0.8)",
+  color: "#facc15",
+};
+
+const navSectionLabel = {
+  marginTop: "0.8rem",
+  fontSize: "0.7rem",
+  textTransform: "uppercase",
+  letterSpacing: "0.08em",
+  color: "#6b7280",
+};
+
+const navItemDisabled = {
+  ...navItem,
+  opacity: 0.4,
+  cursor: "default",
+};
+
+const sidebarFooter = {
+  marginTop: "auto",
+  borderTop: "1px solid rgba(31,41,55,0.9)",
+  paddingTop: "0.8rem",
+  display: "flex",
+  flexDirection: "column",
+  gap: "0.5rem",
+};
+
+const sidebarUserBox = {
+  fontSize: "0.8rem",
+};
+
+const sidebarUserName = {
+  fontWeight: 600,
+};
+
+const sidebarUserEmail = {
+  fontSize: "0.74rem",
+  color: "#9ca3af",
+};
+
+const sidebarLogoutButton = {
+  marginTop: "0.2rem",
+  padding: "0.45rem 0.75rem",
+  borderRadius: "0.7rem",
+  border: "1px solid rgba(148,163,184,0.6)",
+  backgroundColor: "transparent",
+  color: "#e5e7eb",
+  fontSize: "0.8rem",
+  cursor: "pointer",
+};
+
+/* MAIN */
+
+const mainWrapper = {
+  flex: 1,
+  padding: "1.4rem 2rem 1.6rem",
+  display: "flex",
+  flexDirection: "column",
+  gap: "1.3rem",
 };
 
 const header = {
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
-  gap: "1rem",
 };
 
-const logoArea = {
-  display: "flex",
-  alignItems: "center",
-  gap: "1rem",
-};
-
-const logoImage = {
-  height: "40px",
-  objectFit: "contain",
-};
-
-const pageTitle = {
+const headerTitle = {
   fontSize: "1.4rem",
   fontWeight: 600,
   margin: 0,
 };
 
-const pageSubtitle = {
+const headerSubtitle = {
   margin: 0,
-  marginTop: "0.1rem",
-  fontSize: "0.85rem",
+  marginTop: "0.2rem",
+  fontSize: "0.9rem",
   color: "#9ca3af",
 };
 
-const backButton = {
-  padding: "0.45rem 0.9rem",
-  borderRadius: "999px",
-  border: "1px solid rgba(148,163,184,0.4)",
-  background: "transparent",
-  color: "#e5e7eb",
+const headerUserBlock = {
+  textAlign: "right",
   fontSize: "0.8rem",
-  cursor: "pointer",
 };
 
-const topRow = {
-  marginTop: "0.5rem",
+const headerUserEmail = {
+  fontWeight: 600,
+};
+
+const headerUserName = {
+  color: "#9ca3af",
+};
+
+const topGrid = {
   display: "grid",
-  gridTemplateColumns: "minmax(0, 2.5fr) minmax(0, 1.2fr)",
-  gap: "1rem",
-  alignItems: "stretch",
+  gridTemplateColumns: "minmax(0, 2.2fr) minmax(0, 1.8fr)",
+  gap: "1.2rem",
 };
 
-const projectsHeroBox = {
-  backgroundColor: "#050505",
-  borderRadius: "1rem",
-  padding: "1rem",
-  border: "1px solid rgba(55,65,81,0.9)",
-  display: "flex",
-  flexDirection: "column",
-  gap: "0.5rem",
-};
-
-const heroLabel = {
-  fontSize: "0.75rem",
+const sectionLabel = {
+  fontSize: "0.72rem",
   color: "#9ca3af",
   textTransform: "uppercase",
-  letterSpacing: "0.06em",
+  letterSpacing: "0.08em",
+  marginBottom: "0.4rem",
 };
 
-const heroTitle = {
-  fontSize: "1.1rem",
-  fontWeight: 600,
-  margin: 0,
-};
-
-const heroText = {
-  fontSize: "0.85rem",
-  margin: 0,
-  color: "#9ca3af",
-};
-
-const filtersBox = {
-  backgroundColor: "#050505",
-  borderRadius: "1rem",
-  padding: "1rem",
-  border: "1px solid rgba(55,65,81,0.9)",
-};
-
-const label = {
-  display: "block",
-  fontSize: "0.75rem",
-  color: "#9ca3af",
-  marginBottom: "0.2rem",
-};
-
-const input = {
-  width: "100%",
-  padding: "0.55rem 0.7rem",
-  borderRadius: "0.7rem",
-  border: "1px solid rgba(75,85,99,0.9)",
+const summaryCard = {
   backgroundColor: "#020617",
-  color: "#f9fafb",
-  fontSize: "0.85rem",
-};
-
-const textarea = {
-  width: "100%",
-  padding: "0.55rem 0.7rem",
-  borderRadius: "0.7rem",
-  border: "1px solid rgba(75,85,99,0.9)",
-  backgroundColor: "#020617",
-  color: "#f9fafb",
-  fontSize: "0.85rem",
-  resize: "vertical",
-};
-
-const createButton = {
-  padding: "0.6rem 1rem",
-  borderRadius: "0.9rem",
-  border: "none",
-  background: "linear-gradient(135deg, #facc15, #eab308)", // dourado
-  color: "#111827",
-  fontWeight: 600,
-  fontSize: "0.85rem",
-  cursor: "pointer",
-};
-
-const createButtonHero = {
-  ...createButton,
-  marginTop: "0.5rem",
-  alignSelf: "flex-start",
-};
-
-const cardWrapper = {
-  marginTop: "0.5rem",
-  background:
-    "radial-gradient(circle at top left, rgba(250,204,21,0.08), transparent 55%), #020617",
   borderRadius: "1rem",
   border: "1px solid rgba(31,41,55,0.9)",
-  padding: "1rem 1.1rem",
-  boxShadow: "0 20px 60px rgba(0,0,0,0.9)",
+  padding: "1.3rem 1.4rem",
+  boxShadow: "0 20px 60px rgba(0,0,0,0.85)",
 };
 
-const tableWrapper = {
-  borderRadius: "0.75rem",
-  border: "1px solid rgba(55,65,81,0.9)",
-  overflow: "hidden",
+const summaryTitle = {
+  fontSize: "1.2rem",
+  fontWeight: 600,
+  margin: 0,
+  marginBottom: "0.6rem",
 };
 
-const tableHeaderRow = {
-  display: "flex",
-  alignItems: "center",
-  backgroundColor: "#020617",
-  borderBottom: "1px solid rgba(55,65,81,0.9)",
+const summaryText = {
+  fontSize: "0.9rem",
+  color: "#d1d5db",
+  margin: 0,
+  maxWidth: "40rem",
 };
 
-const thCell = {
-  padding: "0.55rem 0.75rem",
-  fontSize: "0.75rem",
-  fontWeight: 500,
-  textTransform: "uppercase",
-  letterSpacing: "0.04em",
-  color: "#9ca3af",
-};
-
-const tableBody = {
-  maxHeight: "60vh",
-  overflowY: "auto",
-};
-
-const tableRow = {
-  display: "flex",
-  alignItems: "flex-start",
-  borderBottom: "1px solid rgba(31,41,55,0.8)",
-  backgroundColor: "#020617",
+const primaryButton = {
+  marginTop: "1rem",
+  padding: "0.8rem 1.3rem",
+  borderRadius: "999px",
+  border: "none",
+  background: "linear-gradient(135deg, #facc15, #eab308)",
+  color: "#111827",
+  fontWeight: 600,
+  fontSize: "0.9rem",
   cursor: "pointer",
 };
 
-const tdCell = {
-  padding: "0.6rem 0.75rem",
-  fontSize: "0.85rem",
-  borderRight: "1px solid rgba(31,41,55,0.7)",
+const userPanelWrapper = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "0.8rem",
 };
 
-const empresaName = {
-  fontSize: "0.85rem",
-  fontWeight: 500,
+const userPanelGrid = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1.2fr) minmax(0, 1.2fr)",
+  gap: "0.8rem",
 };
 
-const empresaSub = {
-  fontSize: "0.75rem",
-  color: "#9ca3af",
+const smallCard = {
+  backgroundColor: "#020617",
+  borderRadius: "0.9rem",
+  border: "1px solid rgba(31,41,55,0.9)",
+  padding: "0.9rem 1rem",
 };
 
-const descricaoText = {
+const smallCardTitle = {
+  fontSize: "0.95rem",
+  fontWeight: 600,
+  margin: 0,
+  marginBottom: "0.4rem",
+};
+
+const smallCardText = {
+  fontSize: "0.82rem",
+  color: "#d1d5db",
+  margin: 0,
+};
+
+const projectsCountRow = {
+  display: "flex",
+  alignItems: "baseline",
+  gap: "0.3rem",
+  marginTop: "0.15rem",
+};
+
+const projectsCountNumber = {
+  fontSize: "1.6rem",
+  fontWeight: 700,
+  color: "#facc15",
+};
+
+const projectsCountLabel = {
   fontSize: "0.8rem",
   color: "#d1d5db",
 };
 
-const errorBox = {
-  backgroundColor: "rgba(239,68,68,0.08)",
-  border: "1px solid rgba(248,113,113,0.6)",
-  color: "#fecaca",
-  borderRadius: "0.75rem",
-  padding: "0.6rem 0.8rem",
+const projectsCountDetail = {
+  marginTop: "0.3rem",
   fontSize: "0.8rem",
-  marginBottom: "0.8rem",
+  color: "#9ca3af",
 };
 
-/* ========= MODAL ========= */
+const linkButton = {
+  marginTop: "0.4rem",
+  padding: 0,
+  border: "none",
+  background: "transparent",
+  color: "#facc15",
+  fontSize: "0.8rem",
+  fontWeight: 600,
+  cursor: "pointer",
+};
 
-const modalOverlay = {
-  position: "fixed",
-  inset: 0,
-  backgroundColor: "rgba(0,0,0,0.7)",
+const agendaCard = {
+  ...smallCard,
+  marginTop: "0.1rem",
+};
+
+const agendaList = {
+  marginTop: "0.5rem",
   display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  zIndex: 50,
+  flexDirection: "column",
+  gap: "0.25rem",
+  fontSize: "0.8rem",
 };
 
-const modalContent = {
+const agendaRow = {
+  display: "flex",
+  justifyContent: "space-between",
+  gap: "1rem",
+};
+
+const agendaDay = {
+  color: "#e5e7eb",
+};
+
+const agendaInfo = {
+  color: "#9ca3af",
+};
+
+/* PROJETOS RECENTES */
+
+const recentSection = {
+  marginTop: "0.4rem",
+  display: "flex",
+  flexDirection: "column",
+  gap: "0.4rem",
+};
+
+const recentCard = {
   backgroundColor: "#020617",
   borderRadius: "1rem",
-  border: "1px solid rgba(55,65,81,0.9)",
-  padding: "1rem",
-  width: "100%",
-  maxWidth: "720px",
-  boxShadow: "0 20px 60px rgba(0,0,0,0.9)",
+  border: "1px solid rgba(31,41,55,0.9)",
+  padding: "0.9rem 1.1rem",
 };
 
-const modalHeader = {
+const recentProjectMain = {
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
-  marginBottom: "0.5rem",
+  gap: "1rem",
 };
 
-const modalTitle = {
-  fontSize: "1rem",
+const recentProjectTitle = {
+  fontSize: "0.95rem",
   fontWeight: 600,
-  margin: 0,
 };
 
-const modalCloseButton = {
-  border: "none",
-  background: "transparent",
+const recentProjectSubtitle = {
+  fontSize: "0.82rem",
   color: "#9ca3af",
-  fontSize: "1.2rem",
-  cursor: "pointer",
 };
 
-const modalForm = {
-  display: "grid",
-  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-  gap: "0.75rem 0.75rem",
+const recentStatusPill = {
+  padding: "0.25rem 0.7rem",
+  borderRadius: "999px",
+  border: "1px solid rgba(148,163,184,0.8)",
+  fontSize: "0.75rem",
+};
+
+const recentProjectMeta = {
   marginTop: "0.5rem",
-};
-
-const modalFooter = {
-  gridColumn: "1 / -1",
   display: "flex",
-  justifyContent: "flex-end",
-  gap: "0.5rem",
-  marginTop: "0.4rem",
+  justifyContent: "space-between",
+  fontSize: "0.78rem",
+  color: "#9ca3af",
 };
 
-const modalCancelButton = {
-  padding: "0.6rem 1rem",
-  borderRadius: "0.9rem",
-  border: "1px solid rgba(75,85,99,0.9)",
-  backgroundColor: "transparent",
-  color: "#e5e7eb",
-  fontSize: "0.85rem",
-  cursor: "pointer",
-};
-
-export default ProjectsStatusPage;
+export default TasksPage;
