@@ -20,7 +20,7 @@ const INDICATORS = [
 
 const PREVIEW_LIMIT = 20;
 const UPSERT_BATCH_SIZE = 500;
-const FATURAMENTO_ON_CONFLICT = "projeto_id,import_hash"; // ⚠️ precisa existir índice único no banco
+const FATURAMENTO_ON_CONFLICT = "projeto_id,import_hash"; // precisa do índice único
 
 function UploadPage() {
   const [user, setUser] = useState(null);
@@ -40,12 +40,16 @@ function UploadPage() {
   const [msg, setMsg] = useState("");
   const [err, setErr] = useState("");
 
-  // Fluxo
+  // fluxo
   const [step, setStep] = useState("upload"); // upload | preview | done
   const [storagePath, setStoragePath] = useState("");
   const [rows, setRows] = useState([]);
   const [previewRows, setPreviewRows] = useState([]);
   const [importBatchId, setImportBatchId] = useState(null);
+
+  // relatório
+  const [rowsProcessed, setRowsProcessed] = useState(0);
+  const [duplicatesRemoved, setDuplicatesRemoved] = useState(0);
 
   useEffect(() => {
     async function init() {
@@ -98,6 +102,10 @@ function UploadPage() {
     setRows([]);
     setPreviewRows([]);
     setImportBatchId(null);
+
+    // reset relatório
+    setRowsProcessed(0);
+    setDuplicatesRemoved(0);
   }
 
   function normalizeFilename(name) {
@@ -108,7 +116,7 @@ function UploadPage() {
   }
 
   // ============================
-  // Utils Preview / Hash / Upsert
+  // Utils de parsing / normalização
   // ============================
 
   function normHeader(s = "") {
@@ -173,35 +181,29 @@ function UploadPage() {
     return null;
   }
 
-  // Hash determinístico por linha — evita duplicação.
-  // Recomendação: usa campos que “identificam” a linha no mundo real.
-  function makeImportHash(row) {
-    // Normaliza valores para não mudar por causa de espaçamentos/formatos
-    const parts = [
-      row.data_de_emissao,
-      row.empresa_emissora,
-      row.pedido,
-      row.tipo_nf,
-      row.nf,
-      row.cfop,
-      row.razao_social,
-      row.nome_fantasia,
-      row.cod_produto,
-      row.descricao,
-      row.unidade,
-      row.quantidade,
-      row.vendedor,
-      row.valor_unit,
-      row.valor_total,
-      row.cidade,
-      row.estado,
-      row.pmv_cimp,
-      row.grupo,
-      row.familia,
-      row.faturado,
-    ].map((v) => String(v ?? "").trim().toLowerCase());
+  function cleanStr(v) {
+    return String(v ?? "")
+      .trim()
+      .replace(/\s+/g, " ")
+      .toLowerCase();
+  }
 
-    // não usa crypto pra evitar dependência — string já resolve com índice único
+  // ✅ Hash “chave de negócio” (sem idx, para reimportar o mesmo arquivo dar o mesmo hash)
+  // Ajuste se você quiser incluir mais campos.
+  function makeImportHash(row) {
+    const dataISO = toDateISO(row.data_de_emissao);
+
+    const parts = [
+      cleanStr(dataISO),
+      cleanStr(row.nf),
+      cleanStr(row.pedido),
+      cleanStr(row.cod_produto),
+      cleanStr(toNumber(row.quantidade)),
+      cleanStr(toNumber(row.valor_total)),
+      cleanStr(row.cfop),
+      cleanStr(row.empresa_emissora),
+    ];
+
     return parts.join("|");
   }
 
@@ -228,15 +230,13 @@ function UploadPage() {
   }
 
   function mapRowToFaturamento(row, projetoId, batchId) {
-    // gera hash a partir do row normalizado
     const import_hash = makeImportHash(row);
 
     return {
       projeto_id: projetoId,
       import_batch_id: batchId,
-      import_hash, // ✅ chave anti-duplicação
+      import_hash,
 
-      // ⚠️ ajuste aqui caso o nome da coluna no seu banco seja diferente
       data_emissao: toDateISO(row.data_de_emissao),
 
       empresa_emissora: row.empresa_emissora ?? null,
@@ -335,7 +335,7 @@ function UploadPage() {
   }
 
   // ============================
-  // Inserir: cria import_batches + UPSERT em faturamento (sem duplicar)
+  // Upsert Faturamento (sem duplicar) + Dedup payload
   // ============================
 
   async function handleUpsertFaturamento() {
@@ -371,9 +371,21 @@ function UploadPage() {
       const batchId = batchData.id;
       setImportBatchId(batchId);
 
-      // 2) UPSERT em lotes — sem duplicar graças ao índice único (projeto_id, import_hash)
-      const payload = rows.map((r) => mapRowToFaturamento(r, projectId, batchId));
+      // 2) Monta payload
+      const payloadRaw = rows.map((r) => mapRowToFaturamento(r, projectId, batchId));
 
+      // 3) ✅ Dedup dentro do payload por import_hash (evita erro do Postgres)
+      const dedupMap = new Map();
+      for (const item of payloadRaw) {
+        // mantém a última ocorrência do mesmo hash
+        dedupMap.set(item.import_hash, item);
+      }
+      const payload = Array.from(dedupMap.values());
+
+      const removed = payloadRaw.length - payload.length;
+      setDuplicatesRemoved(removed);
+
+      // 4) Upsert em lotes
       for (let i = 0; i < payload.length; i += UPSERT_BATCH_SIZE) {
         const chunk = payload.slice(i, i + UPSERT_BATCH_SIZE);
 
@@ -382,9 +394,13 @@ function UploadPage() {
           .upsert(chunk, { onConflict: FATURAMENTO_ON_CONFLICT });
 
         if (error) throw error;
+
+        setRowsProcessed(Math.min(i + chunk.length, payload.length));
       }
 
-      setMsg(`Upsert concluído ✅ Linhas processadas: ${rows.length} (sem duplicar)`);
+      setMsg(
+        `Upsert concluído ✅ Processadas: ${payload.length} linhas (removidas duplicadas do arquivo: ${removed}).`
+      );
       setStep("done");
 
       // limpar input
@@ -494,12 +510,22 @@ function UploadPage() {
                 >
                   {loading ? "Inserindo..." : "Inserir / Atualizar (sem duplicar)"}
                 </button>
+
+                {rowsProcessed ? (
+                  <div style={{ marginTop: "0.5rem", fontSize: "0.82rem", color: "#9ca3af" }}>
+                    Progresso: <b>{rowsProcessed}</b> / <b>{Math.max(rows.length - duplicatesRemoved, 0)}</b>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
             {step === "done" ? (
               <div style={{ ...successBox, marginTop: "0.25rem" }}>
-                ✅ Importação finalizada (sem duplicar). Linhas processadas: <b>{rows.length}</b>
+                ✅ Importação finalizada (sem duplicar).
+                <div style={{ marginTop: "0.35rem", fontSize: "0.82rem", color: "#d1fae5" }}>
+                  Processadas: <b>{Math.max(rows.length - duplicatesRemoved, 0)}</b> | Duplicadas removidas do arquivo:{" "}
+                  <b>{duplicatesRemoved}</b>
+                </div>
                 <div style={{ marginTop: "0.35rem", fontSize: "0.82rem", color: "#d1fae5" }}>
                   Storage path: <b>{storagePath}</b>
                 </div>
