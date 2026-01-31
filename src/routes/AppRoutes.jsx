@@ -1,3 +1,4 @@
+// src/routes/AppRoutes.jsx
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabaseClient";
@@ -10,14 +11,18 @@ import SignupPage from "../pages/SignupPage";
 import TasksPage from "../pages/TasksPage"; // HOME pós-login
 import ProjectsStatusPage from "../pages/ProjectsStatusPage";
 import TasksManagerPage from "../pages/TasksManagerPage";
-import UploadPage from "../pages/UploadPage"; // ✅ habilitado
+import UploadPage from "../pages/UploadPage";
 
+// Layout
 import SidebarLayout from "../components/SidebarLayout";
 
+// Dashboard
+import FaturamentoDashboard from "../pages/dashboards/FaturamentoDashboard";
+
 /* =========================
-   ROTA PROTEGIDA
+   ROTA PROTEGIDA (Outlet)
    ========================= */
-function ProtectedRoute({ children }) {
+function ProtectedRoute() {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
 
@@ -44,7 +49,9 @@ function ProtectedRoute({ children }) {
 
   if (loading) return null;
   if (!session) return <Navigate to="/login" replace />;
-  return children;
+
+  // ✅ importante: retorna o layout das rotas filhas
+  return <SidebarLayout />;
 }
 
 /* =========================
@@ -84,53 +91,16 @@ export default function AppRoutes() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignupPage />} />
 
-        {/* HOME */}
-        <Route
-          path="/app"
-          element={
-            <ProtectedRoute>
-              <SidebarLayout>
-                <TasksPage />
-              </SidebarLayout>
-            </ProtectedRoute>
-          }
-        />
+        {/* ✅ Privadas: ProtectedRoute -> SidebarLayout -> Outlet */}
+        <Route element={<ProtectedRoute />}>
+          <Route path="/app" element={<TasksPage />} />
 
-        {/* STATUS & PROSPECÇÃO */}
-        <Route
-          path="/projects/status"
-          element={
-            <ProtectedRoute>
-              <SidebarLayout>
-                <ProjectsStatusPage />
-              </SidebarLayout>
-            </ProtectedRoute>
-          }
-        />
-
-        {/* TAREFAS */}
-        <Route
-          path="/tasks/manage"
-          element={
-            <ProtectedRoute>
-              <SidebarLayout>
-                <TasksManagerPage />
-              </SidebarLayout>
-            </ProtectedRoute>
-          }
-        />
-
-        {/* ✅ UPLOADS */}
-        <Route
-          path="/uploads"
-          element={
-            <ProtectedRoute>
-              <SidebarLayout>
-                <UploadPage />
-              </SidebarLayout>
-            </ProtectedRoute>
-          }
-        />
+          {/* Mantive seus paths exatamente como estão hoje */}
+          <Route path="/projects/status" element={<ProjectsStatusPage />} />
+          <Route path="/tasks/manage" element={<TasksManagerPage />} />
+          <Route path="/uploads" element={<UploadPage />} />
+          <Route path="/dashboards/faturamento" element={<FaturamentoDashboard />} />
+        </Route>
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
