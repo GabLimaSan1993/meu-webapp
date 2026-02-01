@@ -1,15 +1,14 @@
 // src/components/SidebarLayout.jsx
 import React, { useMemo, useState } from "react";
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import TopBar from "./TopBar";
 import { supabase } from "../lib/supabaseClient";
 
-export default function SidebarLayout() {
+export default function SidebarLayout({ children }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const nav = useNavigate();
   const location = useLocation();
 
-  // ✅ paths alinhados com AppRoutes.jsx
   const navItems = useMemo(
     () => [
       { label: "Início", to: "/app" },
@@ -17,6 +16,7 @@ export default function SidebarLayout() {
       { label: "Tarefas", to: "/tasks/manage" },
       { label: "Uploads", to: "/uploads" },
       { label: "Faturamento", to: "/dashboards/faturamento" },
+      { label: "Contas a Pagar", to: "/dashboards/contas-pagar" },
     ],
     []
   );
@@ -77,15 +77,13 @@ export default function SidebarLayout() {
         </div>
       ) : null}
 
-      {/* Conteúdo ocupa largura total */}
-      <main style={content}>
-        <Outlet />
-      </main>
+      {/* ✅ AQUI É O PONTO CRÍTICO */}
+      <main style={content}>{children}</main>
     </div>
   );
 }
 
-/* ===== styles ===== */
+/* ===== styles (mantém os seus) ===== */
 const shell = {
   minHeight: "100vh",
   background: "#000",

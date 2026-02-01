@@ -8,21 +8,21 @@ import LoginPage from "../pages/LoginPage";
 import SignupPage from "../pages/SignupPage";
 
 // Páginas internas
-import TasksPage from "../pages/TasksPage"; // HOME pós-login
+import TasksPage from "../pages/TasksPage";
 import ProjectsStatusPage from "../pages/ProjectsStatusPage";
 import TasksManagerPage from "../pages/TasksManagerPage";
 import UploadPage from "../pages/UploadPage";
 
-// Layout
 import SidebarLayout from "../components/SidebarLayout";
 
-// Dashboard
+// Dashboards
 import FaturamentoDashboard from "../pages/dashboards/FaturamentoDashboard";
+import ContasPagarDashboard from "../pages/dashboards/ContasPagarDashboard";
 
 /* =========================
-   ROTA PROTEGIDA (Outlet)
-   ========================= */
-function ProtectedRoute() {
+   ROTA PROTEGIDA
+========================= */
+function ProtectedRoute({ children }) {
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
 
@@ -49,14 +49,12 @@ function ProtectedRoute() {
 
   if (loading) return null;
   if (!session) return <Navigate to="/login" replace />;
-
-  // ✅ importante: retorna o layout das rotas filhas
-  return <SidebarLayout />;
+  return children;
 }
 
 /* =========================
    REDIRECIONAMENTO ROOT
-   ========================= */
+========================= */
 function IndexRedirect() {
   const [loading, setLoading] = useState(true);
   const [hasSession, setHasSession] = useState(false);
@@ -79,7 +77,7 @@ function IndexRedirect() {
 
 /* =========================
    ROTAS PRINCIPAIS
-   ========================= */
+========================= */
 export default function AppRoutes() {
   return (
     <Router>
@@ -91,16 +89,78 @@ export default function AppRoutes() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignupPage />} />
 
-        {/* ✅ Privadas: ProtectedRoute -> SidebarLayout -> Outlet */}
-        <Route element={<ProtectedRoute />}>
-          <Route path="/app" element={<TasksPage />} />
+        {/* HOME */}
+        <Route
+          path="/app"
+          element={
+            <ProtectedRoute>
+              <SidebarLayout>
+                <TasksPage />
+              </SidebarLayout>
+            </ProtectedRoute>
+          }
+        />
 
-          {/* Mantive seus paths exatamente como estão hoje */}
-          <Route path="/projects/status" element={<ProjectsStatusPage />} />
-          <Route path="/tasks/manage" element={<TasksManagerPage />} />
-          <Route path="/uploads" element={<UploadPage />} />
-          <Route path="/dashboards/faturamento" element={<FaturamentoDashboard />} />
-        </Route>
+        {/* STATUS & PROSPECÇÃO */}
+        <Route
+          path="/projects/status"
+          element={
+            <ProtectedRoute>
+              <SidebarLayout>
+                <ProjectsStatusPage />
+              </SidebarLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* TAREFAS */}
+        <Route
+          path="/tasks/manage"
+          element={
+            <ProtectedRoute>
+              <SidebarLayout>
+                <TasksManagerPage />
+              </SidebarLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* UPLOADS */}
+        <Route
+          path="/uploads"
+          note="uploads"
+          element={
+            <ProtectedRoute>
+              <SidebarLayout>
+                <UploadPage />
+              </SidebarLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* DASHBOARD FATURAMENTO */}
+        <Route
+          path="/dashboards/faturamento"
+          element={
+            <ProtectedRoute>
+              <SidebarLayout>
+                <FaturamentoDashboard />
+              </SidebarLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* ✅ DASHBOARD CONTAS A PAGAR */}
+        <Route
+          path="/dashboards/contas-pagar"
+          element={
+            <ProtectedRoute>
+              <SidebarLayout>
+                <ContasPagarDashboard />
+              </SidebarLayout>
+            </ProtectedRoute>
+          }
+        />
 
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
