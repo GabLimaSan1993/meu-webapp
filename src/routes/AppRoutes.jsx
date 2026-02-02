@@ -13,11 +13,13 @@ import ProjectsStatusPage from "../pages/ProjectsStatusPage";
 import TasksManagerPage from "../pages/TasksManagerPage";
 import UploadPage from "../pages/UploadPage";
 
+// Layout
 import SidebarLayout from "../components/SidebarLayout";
 
 // Dashboards
 import FaturamentoDashboard from "../pages/dashboards/FaturamentoDashboard";
 import ContasPagarDashboard from "../pages/dashboards/ContasPagarDashboard";
+import ContasReceberDashboard from "../pages/dashboards/ContasReceberDashboard"; // ✅ NOVO
 
 /* =========================
    ROTA PROTEGIDA
@@ -128,7 +130,6 @@ export default function AppRoutes() {
         {/* UPLOADS */}
         <Route
           path="/uploads"
-          note="uploads"
           element={
             <ProtectedRoute>
               <SidebarLayout>
@@ -150,13 +151,25 @@ export default function AppRoutes() {
           }
         />
 
-        {/* ✅ DASHBOARD CONTAS A PAGAR */}
+        {/* DASHBOARD CONTAS A PAGAR */}
         <Route
           path="/dashboards/contas-pagar"
           element={
             <ProtectedRoute>
               <SidebarLayout>
                 <ContasPagarDashboard />
+              </SidebarLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* ✅ DASHBOARD CONTAS A RECEBER */}
+        <Route
+          path="/dashboards/contas-receber"
+          element={
+            <ProtectedRoute>
+              <SidebarLayout>
+                <ContasReceberDashboard />
               </SidebarLayout>
             </ProtectedRoute>
           }
