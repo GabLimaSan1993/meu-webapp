@@ -78,7 +78,6 @@ function isBeforeOrEq(isoA, isoB) {
   if (!isoA || !isoB) return false;
   return isoA <= isoB;
 }
-
 function isAfter(isoA, isoB) {
   if (!isoA || !isoB) return false;
   return isoA > isoB;
@@ -122,8 +121,8 @@ export default function ContasReceberDashboard() {
   // filtro Data Base
   const [dataBaseSelected, setDataBaseSelected] = useState("__ALL__");
 
-  // UI: Tabs
-  const [view, setView] = useState("hierarquia"); // hierarquia | fundos | inadimplencia
+  // ✅ ORDEM NOVA: Fundos → Inadimplência → Hierarquia
+  const [view, setView] = useState("fundos"); // fundos | inadimplencia | hierarquia
 
   // Expand sets (separados por view)
   const [openHier, setOpenHier] = useState(() => new Set());
@@ -132,14 +131,14 @@ export default function ContasReceberDashboard() {
 
   // Aging toggles (por view)
   // Hierarquia: abre/fecha aging para Vencido/A Vencer
-  const [agingOpenVencido, setAgingOpenVencido] = useState(false);
-  const [agingOpenAVencer, setAgingOpenAVencer] = useState(false);
+  const [hierAgingOpenVenc, setHierAgingOpenVenc] = useState(false);
+  const [hierAgingOpenAV, setHierAgingOpenAV] = useState(false);
 
-  // Fundos: status abre/fecha aging (uma coluna de Status)
+  // Fundos: A Vencer abre/fecha aging
   const [fundosAgingOpen, setFundosAgingOpen] = useState(false);
 
-  // Inadimplência: vencido abre/fecha aging, e aging abre dias
-  const [inadAgingOpen, setInadAgingOpen] = useState(false);
+  // Inadimplência: A Vencer abre/fecha aging (e aging abre dias quando clicar no bucket)
+  const [inadAgingOpenAV, setInadAgingOpenAV] = useState(false);
   const [openDiasByAging, setOpenDiasByAging] = useState(() => new Set());
 
   useEffect(() => {
@@ -184,10 +183,11 @@ export default function ContasReceberDashboard() {
       setOpenHier(new Set());
       setOpenFundos(new Set());
       setOpenInad(new Set());
-      setAgingOpenVencido(false);
-      setAgingOpenAVencer(false);
+
+      setHierAgingOpenVenc(false);
+      setHierAgingOpenAV(false);
       setFundosAgingOpen(false);
-      setInadAgingOpen(false);
+      setInadAgingOpenAV(false);
       setOpenDiasByAging(new Set());
       setDataBaseSelected("__ALL__");
 
@@ -252,14 +252,11 @@ export default function ContasReceberDashboard() {
       return r.__data_base_iso === base;
     });
 
-    // status calculado por vencimento x data_base
-    // se base for null (ALL), usa o próprio data_base de cada linha (status relativo àquela base)
     return visible.map((r) => {
       const ref = base || r.__data_base_iso;
       const venc = r.__venc_iso;
 
       let calc = normStatus(r.status); // fallback se não tiver datas
-
       if (ref && venc) {
         if (isBeforeOrEq(venc, ref)) calc = STATUS_VENCIDO;
         else if (isAfter(venc, ref)) calc = STATUS_A_VENCER;
@@ -303,26 +300,8 @@ export default function ContasReceberDashboard() {
   }, [filteredRows]);
 
   /* =========================
-     Expand helpers (per view)
+     Inad: dias helpers
   ========================= */
-  function keyFor(pathArr) {
-    return pathArr.join(" > ");
-  }
-
-  function isOpen(setState, setValue, pathArr) {
-    return setValue.has(keyFor(pathArr));
-  }
-
-  function toggleNode(setState, setValue, pathArr) {
-    const k = keyFor(pathArr);
-    setState((prev) => {
-      const next = new Set(prev);
-      if (next.has(k)) next.delete(k);
-      else next.add(k);
-      return next;
-    });
-  }
-
   function toggleAgingDias(agingLabel) {
     setOpenDiasByAging((prev) => {
       const next = new Set(prev);
@@ -339,53 +318,50 @@ export default function ContasReceberDashboard() {
   /* =========================
      VIEW 1 — HIERARQUIA
      Tipo → Subtipo → Grupo → Classificação → Nat Financeira → Sacado
-     Colunas: TOTAL + (VENCIDO/A VENCER) com aging opcional
+
+     ✅ Colunas: VENCIDO | A VENCER | TOTAL (TOTAL por último)
+     ✅ Aging abre/fecha clicando nos headers de VENCIDO / A VENCER
+     ✅ Quando aberto, clicar em qualquer bucket header fecha e volta (mesma UX)
   ========================= */
   const colsHier = useMemo(() => {
-    const base = [{ id: "total", label: "TOTAL" }];
-
-    if (!agingOpenVencido && !agingOpenAVencer) {
+    // base: vencido + avencer + total
+    if (!hierAgingOpenVenc && !hierAgingOpenAV) {
       return [
-        ...base,
         { id: "vencido", label: "VENCIDO", kind: STATUS_VENCIDO },
         { id: "avencer", label: "A VENCER", kind: STATUS_A_VENCER },
+        { id: "total", label: "TOTAL" },
       ];
     }
 
-    const cols = [...base];
+    const cols = [];
 
-    if (agingOpenVencido) {
+    if (hierAgingOpenVenc) {
       const buckets = agingBuckets.vencido.length ? agingBuckets.vencido : ["SEM AGING"];
       for (const a of buckets) cols.push({ id: `v:${a}`, label: `VENCIDO · ${a}`, kind: STATUS_VENCIDO, aging: a });
     } else {
       cols.push({ id: "vencido", label: "VENCIDO", kind: STATUS_VENCIDO });
     }
 
-    if (agingOpenAVencer) {
+    if (hierAgingOpenAV) {
       const buckets = agingBuckets.aVencer.length ? agingBuckets.aVencer : ["SEM AGING"];
       for (const a of buckets) cols.push({ id: `a:${a}`, label: `A VENCER · ${a}`, kind: STATUS_A_VENCER, aging: a });
     } else {
       cols.push({ id: "avencer", label: "A VENCER", kind: STATUS_A_VENCER });
     }
 
+    cols.push({ id: "total", label: "TOTAL" }); // TOTAL sempre por último
     return cols;
-  }, [agingOpenVencido, agingOpenAVencer, agingBuckets]);
+  }, [hierAgingOpenVenc, hierAgingOpenAV, agingBuckets]);
 
-  function valueForCol(nodeRows, col) {
+  function valueForHierCol(nodeRows, col) {
     if (col.id === "total") return sumValor(nodeRows);
-
     const filtered = (nodeRows || []).filter((r) => r.__status_calc === col.kind);
-
     if (!col.aging) return sumValor(filtered);
-
-    const want = col.aging;
-    const f2 = filtered.filter((r) => agingBucketLabel(r.aging) === want);
-    return sumValor(f2);
+    return sumValor(filtered.filter((r) => agingBucketLabel(r.aging) === col.aging));
   }
 
   const treeHier = useMemo(() => {
     const root = [];
-
     const lvl1 = groupBy(filteredRows, (r) => safeStr(r.tipo, "SEM TIPO"));
 
     for (const [tipo, tipoRows] of lvl1.entries()) {
@@ -432,7 +408,6 @@ export default function ContasReceberDashboard() {
       root.push(nodeTipo);
     }
 
-    // ordena bonito
     const sortRec = (nodes) => {
       nodes.sort((a, b) => a.label.localeCompare(b.label, "pt-BR"));
       for (const n of nodes) sortRec(n.children || []);
@@ -451,12 +426,18 @@ export default function ContasReceberDashboard() {
         <div style={{ ...rowWrap, paddingLeft: 14 + depth * 18 }}>
           <div style={rowLeft}>
             {hasChildren ? (
-              <button type="button" style={expBtn} onClick={() => setOpenHier((prev) => {
-                const next = new Set(prev);
-                if (next.has(node.key)) next.delete(node.key);
-                else next.add(node.key);
-                return next;
-              })}>
+              <button
+                type="button"
+                style={expBtn}
+                onClick={() =>
+                  setOpenHier((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(node.key)) next.delete(node.key);
+                    else next.add(node.key);
+                    return next;
+                  })
+                }
+              >
                 {expanded ? "▾" : "▸"}
               </button>
             ) : (
@@ -466,14 +447,11 @@ export default function ContasReceberDashboard() {
           </div>
 
           <div style={{ ...rowGrid, gridTemplateColumns: `repeat(${colsHier.length}, minmax(160px, 1fr))` }}>
-            {colsHier.map((c) => {
-              const v = valueForCol(node.rows, c);
-              return (
-                <div key={c.id} style={cell}>
-                  <span style={cellValue}>{brl(v)}</span>
-                </div>
-              );
-            })}
+            {colsHier.map((c) => (
+              <div key={c.id} style={cell}>
+                <span style={cellValue}>{brl(valueForHierCol(node.rows, c))}</span>
+              </div>
+            ))}
           </div>
         </div>
 
@@ -482,11 +460,97 @@ export default function ContasReceberDashboard() {
     );
   }
 
+  function renderHeadHier() {
+    return (
+      <div style={tableHeadWrap}>
+        <div style={headLeft}>ESTRUTURA</div>
+
+        <div style={{ ...headGrid, gridTemplateColumns: `repeat(${colsHier.length}, minmax(160px, 1fr))` }}>
+          {colsHier.map((c) => {
+            const isVClosed = c.id === "vencido";
+            const isAClosed = c.id === "avencer";
+
+            const isVBucket = String(c.id).startsWith("v:");
+            const isABucket = String(c.id).startsWith("a:");
+
+            // ✅ VENCIDO (fechado) abre
+            if (isVClosed) {
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  style={{ ...headCellBtn, color: "#fecaca" }}
+                  onClick={() => setHierAgingOpenVenc(true)}
+                  title="Abrir Aging do Vencido"
+                >
+                  {c.label}
+                </button>
+              );
+            }
+
+            // ✅ VENCIDO bucket: clicar fecha e volta pro fechado
+            if (isVBucket) {
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  style={{ ...headCellBtn, color: "#fecaca" }}
+                  onClick={() => setHierAgingOpenVenc(false)}
+                  title="Fechar Aging do Vencido"
+                >
+                  {c.label}
+                </button>
+              );
+            }
+
+            // ✅ A VENCER (fechado) abre
+            if (isAClosed) {
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  style={{ ...headCellBtn, color: "#bbf7d0" }}
+                  onClick={() => setHierAgingOpenAV(true)}
+                  title="Abrir Aging do A Vencer"
+                >
+                  {c.label}
+                </button>
+              );
+            }
+
+            // ✅ A VENCER bucket: clicar fecha e volta pro fechado
+            if (isABucket) {
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  style={{ ...headCellBtn, color: "#bbf7d0" }}
+                  onClick={() => setHierAgingOpenAV(false)}
+                  title="Fechar Aging do A Vencer"
+                >
+                  {c.label}
+                </button>
+              );
+            }
+
+            // TOTAL (sempre por último)
+            return (
+              <div key={c.id} style={headCell}>
+                {c.label}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   /* =========================
      VIEW 2 — FUNDOS
      Portador → Operação
-     Colunas: TOTAL + STATUS (clicável abre/fecha aging por status) para valor
-     Aqui: Status vem do __status_calc (por data_base)
+
+     ✅ Colunas: VENCIDO | A VENCER (ou aging buckets) | TOTAL
+     ✅ A VENCER abre aging; clique em bucket header fecha
   ========================= */
   const fundosAgingBuckets = useMemo(() => {
     if (!fundosAgingOpen) return [];
@@ -512,7 +576,6 @@ export default function ContasReceberDashboard() {
         });
       }
 
-      // sort children by value desc
       nodeP.children.sort((a, b) => sumValor(b.rows) - sumValor(a.rows));
       root.push(nodeP);
     }
@@ -522,8 +585,7 @@ export default function ContasReceberDashboard() {
   }, [filteredRows]);
 
   function sumByStatus(rowsArr, statusWanted, agingWanted = null) {
-    const st = statusWanted;
-    const base = (rowsArr || []).filter((r) => r.__status_calc === st);
+    const base = (rowsArr || []).filter((r) => r.__status_calc === statusWanted);
     if (!agingWanted) return sumValor(base);
     return sumValor(base.filter((r) => agingBucketLabel(r.aging) === agingWanted));
   }
@@ -532,14 +594,8 @@ export default function ContasReceberDashboard() {
     const expanded = openFundos.has(node.key);
     const hasChildren = (node.children || []).length > 0;
 
-    // base columns: TOTAL + VENCIDO + A VENCER
-    const colsCount = 1 + 1 + (fundosAgingOpen ? fundosAgingBuckets.length : 1); // total + vencido + (avencer or avencer buckets)
-    // Vamos estruturar assim:
-    // - TOTAL
-    // - VENCIDO (fixo sem aging)
-    // - A VENCER (clicável abre aging -> vira A VENCER · bucket)
-    // (você pediu “coluna com os status e ao clicar no status abrir o aging”. Aqui: clique no cabeçalho "STATUS" abre aging do A Vencer)
-    // Para ficar mais literal: a gente usa duas colunas: VENCIDO e A VENCER; clique no cabeçalho A VENCER alterna aging.
+    const colCount = fundosAgingOpen ? 1 + fundosAgingBuckets.length + 2 : 3; // VENCIDO + (AV buckets) + TOTAL = 2 + buckets + 1 (vencido)
+
     return (
       <React.Fragment key={node.key}>
         <div style={{ ...rowWrap, paddingLeft: 14 + depth * 18 }}>
@@ -565,17 +621,11 @@ export default function ContasReceberDashboard() {
             <div style={rowLabel}>{node.label}</div>
           </div>
 
-          <div
-            style={{
-              ...rowGrid,
-              gridTemplateColumns: `repeat(${fundosAgingOpen ? 2 + fundosAgingBuckets.length : 3}, minmax(180px, 1fr))`,
-            }}
-          >
-            {/* TOTAL */}
-            <div style={cell}><span style={cellValue}>{brl(sumValor(node.rows))}</span></div>
-
+          <div style={{ ...rowGrid, gridTemplateColumns: `repeat(${colCount}, minmax(180px, 1fr))` }}>
             {/* VENCIDO */}
-            <div style={cell}><span style={{ ...cellValue, color: "#fecaca" }}>{brl(sumByStatus(node.rows, STATUS_VENCIDO))}</span></div>
+            <div style={cell}>
+              <span style={{ ...cellValue, color: "#fecaca" }}>{brl(sumByStatus(node.rows, STATUS_VENCIDO))}</span>
+            </div>
 
             {/* A VENCER (ou buckets) */}
             {!fundosAgingOpen ? (
@@ -591,6 +641,11 @@ export default function ContasReceberDashboard() {
                 </div>
               ))
             )}
+
+            {/* TOTAL por último */}
+            <div style={cell}>
+              <span style={cellValue}>{brl(sumValor(node.rows))}</span>
+            </div>
           </div>
         </div>
 
@@ -599,16 +654,81 @@ export default function ContasReceberDashboard() {
     );
   }
 
+  function renderHeadFundos() {
+    // ✅ ordem: VENCIDO | A VENCER (ou buckets) | TOTAL
+    const labels = fundosAgingOpen
+      ? ["VENCIDO", ...fundosAgingBuckets.map((a) => `A VENCER · ${a}`), "TOTAL"]
+      : ["VENCIDO", "A VENCER", "TOTAL"];
+
+    return (
+      <div style={tableHeadWrap}>
+        <div style={headLeft}>PORTADOR / OPERAÇÃO</div>
+
+        <div style={{ ...headGrid, gridTemplateColumns: `repeat(${labels.length}, minmax(180px, 1fr))` }}>
+          {labels.map((label) => {
+            // VENCIDO (fixo)
+            if (label === "VENCIDO") {
+              return (
+                <div key={label} style={{ ...headCell, color: "#fecaca" }}>
+                  {label}
+                </div>
+              );
+            }
+
+            // A VENCER (fechado) abre aging
+            if (label === "A VENCER") {
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  style={{ ...headCellBtn, color: "#bbf7d0" }}
+                  onClick={() => setFundosAgingOpen(true)}
+                  title="Abrir Aging do A Vencer"
+                >
+                  {label}
+                </button>
+              );
+            }
+
+            // buckets: clicar fecha aging
+            if (label.startsWith("A VENCER ·")) {
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  style={{ ...headCellBtn, color: "#bbf7d0" }}
+                  onClick={() => setFundosAgingOpen(false)}
+                  title="Fechar Aging do A Vencer"
+                >
+                  {label}
+                </button>
+              );
+            }
+
+            // TOTAL
+            return (
+              <div key={label} style={headCell}>
+                {label}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   /* =========================
      VIEW 3 — INADIMPLÊNCIA
      Sacado → Portador
-     Coluna: VENCIDO (clicável abre aging; click aging abre dias)
+
+     ✅ Colunas: VENCIDO | A VENCER | TOTAL
+     ✅ Ao clicar em A VENCER abre aging
+     ✅ Ao clicar em bucket header do aging fecha e volta pra A VENCER
+     ✅ Ao clicar no bucket (célula) abre DIAS (igual você já tinha)
   ========================= */
   const treeInad = useMemo(() => {
-    const onlyVenc = filteredRows.filter((r) => r.__status_calc === STATUS_VENCIDO);
-
     const root = [];
-    const lvl1 = groupBy(onlyVenc, (r) => safeStr(r.sacado, "SEM SACADO"));
+    const lvl1 = groupBy(filteredRows, (r) => safeStr(r.sacado, "SEM SACADO"));
 
     for (const [sacado, sRows] of lvl1.entries()) {
       const nodeS = { key: `sacado:${sacado}`, label: sacado, rows: sRows, children: [] };
@@ -631,20 +751,24 @@ export default function ContasReceberDashboard() {
     return root;
   }, [filteredRows]);
 
-  function sumByAging(rowsArr, agingLabel) {
-    return sumValor((rowsArr || []).filter((r) => agingBucketLabel(r.aging) === agingLabel));
+  function sumByAgingAndStatus(rowsArr, statusWanted, agingLabel) {
+    const base = (rowsArr || []).filter((r) => r.__status_calc === statusWanted);
+    return sumValor(base.filter((r) => agingBucketLabel(r.aging) === agingLabel));
   }
 
-  function diasBucketsFor(rowsArr, agingLabel) {
-    const onlyA = (rowsArr || []).filter((r) => agingBucketLabel(r.aging) === agingLabel);
+  function diasBucketsFor(rowsArr, statusWanted, agingLabel) {
+    const only = (rowsArr || []).filter((r) => r.__status_calc === statusWanted && agingBucketLabel(r.aging) === agingLabel);
+
     const m = new Map();
-    for (const r of onlyA) {
+    for (const r of only) {
       const k = diasBucketLabel(r.dias);
       m.set(k, (m.get(k) || 0) + Number(r.valor || 0));
     }
+
     const keys = Array.from(m.keys());
     const order = ["0", "1-7", "8-15", "16-30", "31-60", "61-90", "90+", "(sem dias)"];
     keys.sort((a, b) => order.indexOf(a) - order.indexOf(b));
+
     return keys.map((k) => ({ label: k, value: m.get(k) || 0 }));
   }
 
@@ -652,8 +776,8 @@ export default function ContasReceberDashboard() {
     const expanded = openInad.has(node.key);
     const hasChildren = (node.children || []).length > 0;
 
-    // colunas: TOTAL + (VENCIDO ou VENCIDO por aging)
-    const colsCount = inadAgingOpen ? 2 + Math.max(agingBuckets.vencido.length, 1) : 3;
+    const avBuckets = agingBuckets.aVencer.length ? agingBuckets.aVencer : ["SEM AGING"];
+    const colCount = inadAgingOpenAV ? 1 + avBuckets.length + 2 : 3; // VENCIDO + (AV buckets) + TOTAL
 
     return (
       <React.Fragment key={node.key}>
@@ -680,69 +804,60 @@ export default function ContasReceberDashboard() {
             <div style={rowLabel}>{node.label}</div>
           </div>
 
-          <div
-            style={{
-              ...rowGrid,
-              gridTemplateColumns: inadAgingOpen
-                ? `repeat(${2 + Math.max(agingBuckets.vencido.length, 1)}, minmax(180px, 1fr))`
-                : `repeat(3, minmax(180px, 1fr))`,
-            }}
-          >
-            {/* TOTAL */}
+          <div style={{ ...rowGrid, gridTemplateColumns: `repeat(${colCount}, minmax(180px, 1fr))` }}>
+            {/* VENCIDO */}
             <div style={cell}>
-              <span style={cellValue}>{brl(sumValor(node.rows))}</span>
+              <span style={{ ...cellValue, color: "#fecaca" }}>
+                {brl(sumByStatus(node.rows, STATUS_VENCIDO))}
+              </span>
             </div>
 
-            {/* VENCIDO */}
-            {!inadAgingOpen ? (
+            {/* A VENCER (ou buckets) */}
+            {!inadAgingOpenAV ? (
               <div style={cell}>
-                <span style={{ ...cellValue, color: "#fecaca" }}>{brl(sumValor(node.rows))}</span>
+                <span style={{ ...cellValue, color: "#bbf7d0" }}>
+                  {brl(sumByStatus(node.rows, STATUS_A_VENCER))}
+                </span>
               </div>
             ) : (
-              (agingBuckets.vencido.length ? agingBuckets.vencido : ["SEM AGING"]).map((a) => {
-                const v = sumByAging(node.rows, a);
-                const clickable = true;
+              avBuckets.map((a) => {
+                const v = sumByAgingAndStatus(node.rows, STATUS_A_VENCER, a);
                 return (
                   <div
-                    key={`inad:${node.key}:${a}`}
-                    style={{
-                      ...cell,
-                      cursor: clickable ? "pointer" : "default",
-                      textDecoration: clickable ? "underline" : "none",
-                    }}
+                    key={`inad:${node.key}:av:${a}`}
+                    style={{ ...cell, cursor: "pointer", textDecoration: "underline" }}
                     title="Clique para abrir/fechar Dias"
-                    onClick={() => toggleAgingDias(a)}
+                    onClick={() => toggleAgingDias(`AV|${a}`)}
                   >
-                    <span style={{ ...cellValue, color: "#fecaca" }}>{brl(v)}</span>
+                    <span style={{ ...cellValue, color: "#bbf7d0" }}>{brl(v)}</span>
                   </div>
                 );
               })
             )}
 
-            {/* placeholder para alinhar quando aging aberto (já incluído acima) */}
-            {!inadAgingOpen ? (
-              <div style={cell}>
-                <span style={{ ...cellValue, color: "rgba(229,231,235,0.35)" }}>—</span>
-              </div>
-            ) : null}
+            {/* TOTAL por último */}
+            <div style={cell}>
+              <span style={cellValue}>{brl(sumValor(node.rows))}</span>
+            </div>
           </div>
         </div>
 
         {/* filhos Sacado → Portador */}
         {expanded && hasChildren ? node.children.map((ch) => renderNodeInad(ch, depth + 1)) : null}
 
-        {/* Dias breakdown somente no nível Portador (folha), quando aging aberto e aquele aging estiver “clicado” */}
-        {inadAgingOpen && !hasChildren && expanded ? (
-          (agingBuckets.vencido.length ? agingBuckets.vencido : ["SEM AGING"]).map((a) => {
-            if (!isAgingDiasOpen(a)) return null;
+        {/* Dias breakdown somente no nível Portador (folha) */}
+        {inadAgingOpenAV && !hasChildren && expanded ? (
+          (agingBuckets.aVencer.length ? agingBuckets.aVencer : ["SEM AGING"]).map((a) => {
+            const k = `AV|${a}`;
+            if (!openDiasByAging.has(k)) return null;
 
-            const diasRows = diasBucketsFor(node.rows, a);
+            const diasRows = diasBucketsFor(node.rows, STATUS_A_VENCER, a);
             if (!diasRows.length) return null;
 
             return (
               <div key={`dias:${node.key}:${a}`} style={{ padding: "0 16px 8px", marginTop: 4 }}>
                 <div style={{ color: "#9ca3af", fontWeight: 900, fontSize: 12, marginBottom: 6 }}>
-                  {node.label} · {a} · Dias
+                  {node.label} · {a} · Dias (A Vencer)
                 </div>
 
                 {diasRows.map((d) => (
@@ -755,13 +870,14 @@ export default function ContasReceberDashboard() {
                       gridTemplateColumns: "minmax(420px, 1fr) 220px",
                       gap: 10,
                       alignItems: "center",
+                      marginBottom: 8,
                     }}
                   >
                     <div style={{ ...cell, justifyContent: "flex-start" }}>
                       <div style={{ fontWeight: 900 }}>DIAS · {d.label}</div>
                     </div>
                     <div style={{ ...cell, textAlign: "right" }}>
-                      <span style={{ ...cellValue, color: "#fecaca" }}>{brl(d.value)}</span>
+                      <span style={{ ...cellValue, color: "#bbf7d0" }}>{brl(d.value)}</span>
                     </div>
                   </div>
                 ))}
@@ -773,75 +889,59 @@ export default function ContasReceberDashboard() {
     );
   }
 
-  /* =========================
-     Render Head (per view)
-  ========================= */
-  function renderHeadHier() {
+  function renderHeadInad() {
+    const avBuckets = agingBuckets.aVencer.length ? agingBuckets.aVencer : ["SEM AGING"];
+
+    // ✅ ordem: VENCIDO | A VENCER (ou buckets) | TOTAL
+    const labels = inadAgingOpenAV
+      ? ["VENCIDO", ...avBuckets.map((a) => `A VENCER · ${a}`), "TOTAL"]
+      : ["VENCIDO", "A VENCER", "TOTAL"];
+
     return (
       <div style={tableHeadWrap}>
-        <div style={headLeft}>ESTRUTURA</div>
-        <div style={{ ...headGrid, gridTemplateColumns: `repeat(${colsHier.length}, minmax(160px, 1fr))` }}>
-          {colsHier.map((c) => {
-            const isV = c.id === "vencido";
-            const isA = c.id === "avencer";
+        <div style={headLeft}>SACADO / PORTADOR</div>
 
-            if (!isV && !isA) return <div key={c.id} style={headCell}>{c.label}</div>;
-
-            if (isV) {
+        <div style={{ ...headGrid, gridTemplateColumns: `repeat(${labels.length}, minmax(180px, 1fr))` }}>
+          {labels.map((label) => {
+            if (label === "VENCIDO") {
               return (
-                <button
-                  key={c.id}
-                  type="button"
-                  style={{ ...headCellBtn, color: "#fecaca" }}
-                  onClick={() => setAgingOpenVencido((v) => !v)}
-                  title="Abrir/Fechar Aging do Vencido"
-                >
-                  {c.label}
-                </button>
+                <div key={label} style={{ ...headCell, color: "#fecaca" }}>
+                  {label}
+                </div>
               );
             }
 
-            return (
-              <button
-                key={c.id}
-                type="button"
-                style={{ ...headCellBtn, color: "#bbf7d0" }}
-                onClick={() => setAgingOpenAVencer((v) => !v)}
-                title="Abrir/Fechar Aging do A Vencer"
-              >
-                {c.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
-
-  function renderHeadFundos() {
-    // colunas: TOTAL | VENCIDO | A VENCER (ou A VENCER por aging)
-    const cols = fundosAgingOpen ? ["TOTAL", "VENCIDO", ...fundosAgingBuckets.map((a) => `A VENCER · ${a}`)] : ["TOTAL", "VENCIDO", "A VENCER"];
-
-    return (
-      <div style={tableHeadWrap}>
-        <div style={headLeft}>PORTADOR / OPERAÇÃO</div>
-        <div style={{ ...headGrid, gridTemplateColumns: `repeat(${cols.length}, minmax(180px, 1fr))` }}>
-          {cols.map((label) => {
             if (label === "A VENCER") {
               return (
                 <button
                   key={label}
                   type="button"
                   style={{ ...headCellBtn, color: "#bbf7d0" }}
-                  onClick={() => setFundosAgingOpen((v) => !v)}
-                  title="Abrir/Fechar Aging do A Vencer"
+                  onClick={() => setInadAgingOpenAV(true)}
+                  title="Abrir Aging do A Vencer"
                 >
                   {label}
                 </button>
               );
             }
+
+            if (label.startsWith("A VENCER ·")) {
+              // ✅ bucket header clicável fecha e volta pro fechado
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  style={{ ...headCellBtn, color: "#bbf7d0" }}
+                  onClick={() => setInadAgingOpenAV(false)}
+                  title="Fechar Aging do A Vencer"
+                >
+                  {label}
+                </button>
+              );
+            }
+
             return (
-              <div key={label} style={{ ...headCell, color: label.includes("VENCIDO") ? "#fecaca" : "#e5e7eb" }}>
+              <div key={label} style={headCell}>
                 {label}
               </div>
             );
@@ -851,41 +951,8 @@ export default function ContasReceberDashboard() {
     );
   }
 
-  function renderHeadInad() {
-    const cols = inadAgingOpen
-      ? ["TOTAL", ...((agingBuckets.vencido.length ? agingBuckets.vencido : ["SEM AGING"]).map((a) => `VENCIDO · ${a}`))]
-      : ["TOTAL", "VENCIDO", "—"];
-
-    return (
-      <div style={tableHeadWrap}>
-        <div style={headLeft}>SACADO / PORTADOR</div>
-        <div style={{ ...headGrid, gridTemplateColumns: `repeat(${cols.length}, minmax(180px, 1fr))` }}>
-          {cols.map((label) => {
-            if (label === "VENCIDO") {
-              return (
-                <button
-                  key={label}
-                  type="button"
-                  style={{ ...headCellBtn, color: "#fecaca" }}
-                  onClick={() => setInadAgingOpen((v) => !v)}
-                  title="Abrir/Fechar Aging do Vencido"
-                >
-                  {label}
-                </button>
-              );
-            }
-            return (
-              <div
-                key={label}
-                style={{ ...headCell, color: label.includes("VENCIDO") ? "#fecaca" : "rgba(229,231,235,0.85)" }}
-              >
-                {label}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
+  function sumByStatus(rowsArr, st) {
+    return sumValor((rowsArr || []).filter((r) => r.__status_calc === st));
   }
 
   /* =========================
@@ -896,9 +963,7 @@ export default function ContasReceberDashboard() {
       <div style={topLine}>
         <div>
           <h1 style={h1}>Contas a Receber</h1>
-          <div style={sub}>
-            Vencidos e A Vencer, Posição de Fundos e Inadimplência.
-          </div>
+          <div style={sub}>Posição de Fundos, Inadimplência e Posição Vencidos/A Vencer (por Data Base).</div>
         </div>
 
         <div style={rightControls}>
@@ -910,7 +975,6 @@ export default function ContasReceberDashboard() {
             ))}
           </select>
 
-          {/* ✅ filtro Data Base */}
           <select value={dataBaseSelected} onChange={(e) => setDataBaseSelected(e.target.value)} style={select}>
             <option value="__ALL__">Data Base: (Tudo)</option>
             {dataBaseOptions.map((d) => (
@@ -924,16 +988,11 @@ export default function ContasReceberDashboard() {
 
       {err ? <div style={errorBox}>{err}</div> : null}
 
-      {/* KPIs */}
+      {/* KPIs (colunas não importam, mas mantém padrão) */}
       <div style={cards}>
         <div style={card}>
           <div style={kicker}>LINHAS</div>
           <div style={big}>{filteredRows.length}</div>
-        </div>
-
-        <div style={card}>
-          <div style={kicker}>TOTAL</div>
-          <div style={big}>{brl(totals.total)}</div>
         </div>
 
         <div style={card}>
@@ -945,56 +1004,73 @@ export default function ContasReceberDashboard() {
           <div style={{ ...kicker, color: "#bbf7d0" }}>A VENCER</div>
           <div style={big}>{brl(totals.avencer)}</div>
         </div>
+
+        <div style={card}>
+          <div style={kicker}>TOTAL</div>
+          <div style={big}>{brl(totals.total)}</div>
+        </div>
       </div>
 
-      {/* Tabs */}
+      {/* Tabs (ordem nova) */}
       <div style={tabsRow}>
-        <button type="button" onClick={() => setView("hierarquia")} style={{ ...tabBtn, ...(view === "hierarquia" ? tabBtnActive : null) }}>
-          Hierarquia (Tipo → Sacado)
+        <button
+          type="button"
+          onClick={() => setView("fundos")}
+          style={{ ...tabBtn, ...(view === "fundos" ? tabBtnActive : null) }}
+        >
+          Posição de Fundos
         </button>
-        <button type="button" onClick={() => setView("fundos")} style={{ ...tabBtn, ...(view === "fundos" ? tabBtnActive : null) }}>
-          Posição de Fundos (Portador → Operação)
+
+        <button
+          type="button"
+          onClick={() => setView("inadimplencia")}
+          style={{ ...tabBtn, ...(view === "inadimplencia" ? tabBtnActive : null) }}
+        >
+          Inadimplência
         </button>
-        <button type="button" onClick={() => setView("inadimplencia")} style={{ ...tabBtn, ...(view === "inadimplencia" ? tabBtnActive : null) }}>
-          Inadimplência (Sacado → Portador)
+
+        <button
+          type="button"
+          onClick={() => setView("hierarquia")}
+          style={{ ...tabBtn, ...(view === "hierarquia" ? tabBtnActive : null) }}
+        >
+          Posição Vencidos e A Vencer
         </button>
       </div>
 
       <div style={panel}>
         <div style={panelHead}>
           <div>
-            {view === "hierarquia" ? (
+            {view === "fundos" ? (
               <>
-                <div style={panelTitle}>Análise por Hierarquia (Tipo → Sacado)</div>
-                <div style={panelHint}>Clique no Tipo e vá abrindo. Aging abre/fecha clicando em Vencido e A Vencer.</div>
+                <div style={panelTitle}>Posição de Fundos</div>
+                <div style={panelHint}>Portador → Operação. A Vencer abre Aging.</div>
               </>
-            ) : view === "fundos" ? (
+            ) : view === "inadimplencia" ? (
               <>
-                <div style={panelTitle}>Posição de Fundos (Portador → Operação)</div>
-                <div style={panelHint}>Clique no Portador. Aging abre/fecha clicando em “A Vencer”.</div>
+                <div style={panelTitle}>Inadimplência</div>
+                <div style={panelHint}>Sacado → Portador. A Vencer abre Aging e Aging abre Dias.</div>
               </>
             ) : (
               <>
-                <div style={panelTitle}>Inadimplência (Sacado → Portador → Aging → Dias)</div>
-                <div style={panelHint}>Clique no Sacado/Portador. “Vencido” abre/fecha Aging. Clique no Aging para abrir Dias.</div>
+                <div style={panelTitle}>Posição Vencidos e A Vencer</div>
+                <div style={panelHint}>Hierarquia completa. Vencido/A Vencer abrem Aging. Total sempre por último.</div>
               </>
             )}
           </div>
         </div>
 
-        {view === "hierarquia" ? renderHeadHier() : view === "fundos" ? renderHeadFundos() : renderHeadInad()}
+        {view === "fundos" ? renderHeadFundos() : view === "inadimplencia" ? renderHeadInad() : renderHeadHier()}
 
         {loading ? (
           <div style={{ padding: 18, color: "#9ca3af" }}>Carregando…</div>
         ) : (
           <div style={{ paddingBottom: 10 }}>
-            {view === "hierarquia" ? (
-              treeHier.map((n) => renderNodeHier(n, 0))
-            ) : view === "fundos" ? (
-              treeFundos.map((n) => renderNodeFundos(n, 0))
-            ) : (
-              treeInad.map((n) => renderNodeInad(n, 0))
-            )}
+            {view === "fundos"
+              ? treeFundos.map((n) => renderNodeFundos(n, 0))
+              : view === "inadimplencia"
+              ? treeInad.map((n) => renderNodeInad(n, 0))
+              : treeHier.map((n) => renderNodeHier(n, 0))}
           </div>
         )}
       </div>
