@@ -19,7 +19,7 @@ import SidebarLayout from "../components/SidebarLayout";
 // Dashboards
 import FaturamentoDashboard from "../pages/dashboards/FaturamentoDashboard";
 import ContasPagarDashboard from "../pages/dashboards/ContasPagarDashboard";
-import ContasReceberDashboard from "../pages/dashboards/ContasReceberDashboard"; // ✅ NOVO
+import ContasReceberDashboard from "../pages/dashboards/ContasReceberDashboard";
 
 /* =========================
    ROTA PROTEGIDA

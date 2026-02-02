@@ -17,6 +17,7 @@ export default function SidebarLayout({ children }) {
       { label: "Uploads", to: "/uploads" },
       { label: "Faturamento", to: "/dashboards/faturamento" },
       { label: "Contas a Pagar", to: "/dashboards/contas-pagar" },
+      { label: "Contas a Receber", to: "/dashboards/contas-receber" }, // ✅ NOVO
     ],
     []
   );
@@ -77,21 +78,14 @@ export default function SidebarLayout({ children }) {
         </div>
       ) : null}
 
-      {/* ✅ AQUI É O PONTO CRÍTICO */}
       <main style={content}>{children}</main>
     </div>
   );
 }
 
 /* ===== styles (mantém os seus) ===== */
-const shell = {
-  minHeight: "100vh",
-  background: "#000",
-};
-
-const content = {
-  padding: "14px 14px 26px",
-};
+const shell = { minHeight: "100vh", background: "#000" };
+const content = { padding: "14px 14px 26px" };
 
 const pill = {
   padding: "8px 12px",
@@ -175,10 +169,7 @@ const drawerItemActive = {
   boxShadow: "0 14px 35px rgba(245,198,63,0.08)",
 };
 
-const drawerFooter = {
-  marginTop: "auto",
-  padding: 6,
-};
+const drawerFooter = { marginTop: "auto", padding: 6 };
 
 const logoutBtn = {
   width: "100%",
