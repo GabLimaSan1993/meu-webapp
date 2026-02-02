@@ -20,41 +20,7 @@ function uniq(arr) {
 }
 function agingBucketLabel(aging) {
   const a = String(aging ?? "").trim();
-  return a.length ? a : "(sem aging)";
-}
-
-// ✅ Normaliza YYYY-MM-DD para comparar sem timezone
-function toISODateOnly(v) {
-  if (!v && v !== 0) return null;
-
-  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
-  if (typeof v === "string") {
-    const m = v.match(/^(\d{4}-\d{2}-\d{2})/);
-    if (m) return m[1];
-  }
-
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return null;
-
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
-}
-
-// ✅ Status calculado por data_base (não hoje)
-function calcStatusByBaseDate({ dataVenc, dataBase, fallbackStatus }) {
-  const venc = toISODateOnly(dataVenc);
-  const base = toISODateOnly(dataBase);
-
-  if (!venc || !base) {
-    const s = String(fallbackStatus || "").trim().toUpperCase();
-    if (s.includes("VENC")) return STATUS_VENCIDO;
-    if (s.includes("A VENC")) return STATUS_A_VENCER;
-    return "SEM STATUS";
-  }
-
-  return venc < base ? STATUS_VENCIDO : STATUS_A_VENCER;
+  return a.length ? a.toUpperCase() : "(SEM AGING)";
 }
 
 export default function ContasPagarDashboard() {
@@ -68,8 +34,8 @@ export default function ContasPagarDashboard() {
 
   const [rows, setRows] = useState([]);
 
-  // ✅ Filtro Data Base
-  const [dataBaseFilter, setDataBaseFilter] = useState(""); // "" = todas
+  // ✅ Tabs (igual Contas a Receber)
+  const [view, setView] = useState("estrutura"); // estrutura (futuro: favorecido, etc)
 
   // ✅ Aging por coluna (separado)
   const [openAgingVencido, setOpenAgingVencido] = useState(false);
@@ -121,30 +87,23 @@ export default function ContasPagarDashboard() {
       setLoading(true);
       setErr("");
 
+      // reset ui ao trocar projeto
+      setExpanded(new Set());
+      setOpenAgingVencido(false);
+      setOpenAgingAVencer(false);
+      setView("estrutura");
+
       try {
         const { data, error } = await supabase
           .from("contas_pagar")
           .select(
-            "id, projeto_id, tipo, subtipo, grupo, classificacao, nat_financeira, favorecido, status, aging, valor, data_vencimento, data_base"
+            "id, projeto_id, tipo, subtipo, grupo, classificacao, nat_financeira, favorecido, status, aging, valor, data_vencimento"
           )
           .eq("projeto_id", projectId);
 
         if (error) throw error;
 
-        const withCalc = (data || []).map((r) => ({
-          ...r,
-          __data_base_iso: toISODateOnly(r.data_base),
-          __status_calc: calcStatusByBaseDate({
-            dataVenc: r.data_vencimento,
-            dataBase: r.data_base,
-            fallbackStatus: r.status,
-          }),
-        }));
-
-        setRows(withCalc);
-
-        // ✅ reseta filtro quando trocar projeto
-        setDataBaseFilter("");
+        setRows(data || []);
       } catch (e) {
         console.error(e);
         setErr(e.message || "Erro ao carregar contas a pagar.");
@@ -155,43 +114,23 @@ export default function ContasPagarDashboard() {
   }, [projectId]);
 
   // =========================
-  // Lista de datas-base disponíveis
-  // =========================
-  const dataBaseOptions = useMemo(() => {
-    const vals = rows
-      .map((r) => r.__data_base_iso)
-      .filter(Boolean);
-    const unique = uniq(vals);
-    unique.sort((a, b) => (a < b ? 1 : -1)); // desc
-    return unique;
-  }, [rows]);
-
-  // =========================
-  // Rows filtradas por data_base
-  // =========================
-  const filteredRows = useMemo(() => {
-    if (!dataBaseFilter) return rows;
-    return rows.filter((r) => r.__data_base_iso === dataBaseFilter);
-  }, [rows, dataBaseFilter]);
-
-  // =========================
-  // Aging buckets por lado (baseado no status calculado)
+  // Aging buckets por lado
   // =========================
   const agingBuckets = useMemo(() => {
     const venc = uniq(
-      filteredRows
-        .filter((r) => r.__status_calc === STATUS_VENCIDO)
+      rows
+        .filter((r) => String(r.status || "").toUpperCase() === STATUS_VENCIDO)
         .map((r) => agingBucketLabel(r.aging))
-    ).sort();
+    ).sort((a, b) => a.localeCompare(b, "pt-BR"));
 
     const av = uniq(
-      filteredRows
-        .filter((r) => r.__status_calc === STATUS_A_VENCER)
+      rows
+        .filter((r) => String(r.status || "").toUpperCase() === STATUS_A_VENCER)
         .map((r) => agingBucketLabel(r.aging))
-    ).sort();
+    ).sort((a, b) => a.localeCompare(b, "pt-BR"));
 
     return { vencido: venc, aVencer: av };
-  }, [filteredRows]);
+  }, [rows]);
 
   // =========================
   // Tree: Tipo -> ... -> Favorecido
@@ -206,7 +145,7 @@ export default function ContasPagarDashboard() {
       return map.get(keyLabel);
     }
 
-    for (const r of filteredRows) {
+    for (const r of rows) {
       const tipo = safeStr(r.tipo);
       const subtipo = safeStr(r.subtipo);
       const grupo = safeStr(r.grupo);
@@ -251,8 +190,12 @@ export default function ContasPagarDashboard() {
 
       const total = sum(allRows.map((x) => x.valor));
 
-      const vencRows = allRows.filter((x) => x.__status_calc === STATUS_VENCIDO);
-      const avRows = allRows.filter((x) => x.__status_calc === STATUS_A_VENCER);
+      const vencRows = allRows.filter(
+        (x) => String(x.status || "").toUpperCase() === STATUS_VENCIDO
+      );
+      const avRows = allRows.filter(
+        (x) => String(x.status || "").toUpperCase() === STATUS_A_VENCER
+      );
 
       const vencTotal = sum(vencRows.map((x) => x.valor));
       const avTotal = sum(avRows.map((x) => x.valor));
@@ -283,10 +226,10 @@ export default function ContasPagarDashboard() {
     }
 
     return mapToArr(root).map(withTotals);
-  }, [filteredRows, agingBuckets]);
+  }, [rows, agingBuckets]);
 
   // =========================
-  // Expand/Collapse
+  // Expand/Collapse single nodes
   // =========================
   function keyFor(pathArr) {
     return pathArr.join(" > ");
@@ -305,7 +248,7 @@ export default function ContasPagarDashboard() {
   }
 
   // =========================
-  // Grid columns
+  // ✅ Grid columns — ORDEM: VENCIDO | A VENCER | TOTAL (TOTAL no final)
   // =========================
   const gridCols = useMemo(() => {
     const vencOpen = openAgingVencido;
@@ -317,18 +260,27 @@ export default function ContasPagarDashboard() {
     const vencCols = vencOpen ? `repeat(${vencN}, 180px)` : "180px";
     const avCols = avOpen ? `repeat(${avN}, 180px)` : "180px";
 
-    return `minmax(420px, 1fr) 180px ${vencCols} ${avCols}`;
+    // Estrutura + (VENCIDO) + (A VENCER) + TOTAL
+    return `minmax(420px, 1fr) ${vencCols} ${avCols} 180px`;
   }, [openAgingVencido, openAgingAVencer, agingBuckets]);
 
   // =========================
-  // Totais KPIs (por filtro)
+  // Totais KPIs
   // =========================
   const totals = useMemo(() => {
-    const total = sum(filteredRows.map((r) => r.valor));
-    const venc = sum(filteredRows.filter((r) => r.__status_calc === STATUS_VENCIDO).map((r) => r.valor));
-    const av = sum(filteredRows.filter((r) => r.__status_calc === STATUS_A_VENCER).map((r) => r.valor));
+    const total = sum(rows.map((r) => r.valor));
+    const venc = sum(
+      rows
+        .filter((r) => String(r.status || "").toUpperCase() === STATUS_VENCIDO)
+        .map((r) => r.valor)
+    );
+    const av = sum(
+      rows
+        .filter((r) => String(r.status || "").toUpperCase() === STATUS_A_VENCER)
+        .map((r) => r.valor)
+    );
     return { total, venc, av };
-  }, [filteredRows]);
+  }, [rows]);
 
   // =========================
   // Header + Rows render
@@ -336,9 +288,11 @@ export default function ContasPagarDashboard() {
   function renderHeader() {
     return (
       <div style={{ ...rowGrid, gridTemplateColumns: gridCols, ...headerRow }}>
-        <div style={{ ...cell, ...headCell, justifyContent: "flex-start" }}>ESTRUTURA</div>
-        <div style={{ ...cell, ...headCell, textAlign: "right" }}>TOTAL</div>
+        <div style={{ ...cell, ...headCell, justifyContent: "flex-start" }}>
+          ESTRUTURA
+        </div>
 
+        {/* ✅ VENCIDO: clicável abre/fecha aging */}
         {!openAgingVencido ? (
           <button
             type="button"
@@ -371,6 +325,7 @@ export default function ContasPagarDashboard() {
           </button>
         )}
 
+        {/* ✅ A VENCER: clicável abre/fecha aging */}
         {!openAgingAVencer ? (
           <button
             type="button"
@@ -402,6 +357,9 @@ export default function ContasPagarDashboard() {
             A VENCER
           </button>
         )}
+
+        {/* ✅ TOTAL por último */}
+        <div style={{ ...cell, ...headCell, textAlign: "right" }}>TOTAL</div>
       </div>
     );
   }
@@ -413,10 +371,16 @@ export default function ContasPagarDashboard() {
     return (
       <React.Fragment key={keyFor(path)}>
         <div style={{ ...rowGrid, gridTemplateColumns: gridCols, ...dataRow }}>
+          {/* Estrutura */}
           <div style={{ ...cell, justifyContent: "flex-start" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, paddingLeft: depth * 16 }}>
               {hasChildren ? (
-                <button type="button" onClick={() => toggleNode(path)} style={expanderBtn} aria-label={open ? "Recolher" : "Expandir"}>
+                <button
+                  type="button"
+                  onClick={() => toggleNode(path)}
+                  style={expanderBtn}
+                  aria-label={open ? "Recolher" : "Expandir"}
+                >
                   {open ? "▾" : "▸"}
                 </button>
               ) : (
@@ -426,40 +390,60 @@ export default function ContasPagarDashboard() {
             </div>
           </div>
 
-          <div style={{ ...cell, textAlign: "right", fontWeight: 900 }}>{brl(node.__total)}</div>
-
+          {/* VENCIDO */}
           {!openAgingVencido ? (
-            <div style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#fecaca" }}>{brl(node.__vencido)}</div>
+            <div style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#fecaca" }}>
+              {brl(node.__vencido)}
+            </div>
           ) : (
             (agingBuckets.vencido.length ? agingBuckets.vencido : ["__single__"]).map((a) => (
-              <div key={`${keyFor(path)}-v-${a}`} style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#fecaca" }}>
+              <div
+                key={`${keyFor(path)}-v-${a}`}
+                style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#fecaca" }}
+              >
                 {a === "__single__" ? brl(node.__vencido) : brl(node.__vencByAging?.[a] || 0)}
               </div>
             ))
           )}
 
+          {/* A VENCER */}
           {!openAgingAVencer ? (
-            <div style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#bbf7d0" }}>{brl(node.__aVencer)}</div>
+            <div style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#bbf7d0" }}>
+              {brl(node.__aVencer)}
+            </div>
           ) : (
             (agingBuckets.aVencer.length ? agingBuckets.aVencer : ["__single__"]).map((a) => (
-              <div key={`${keyFor(path)}-a-${a}`} style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#bbf7d0" }}>
+              <div
+                key={`${keyFor(path)}-a-${a}`}
+                style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#bbf7d0" }}
+              >
                 {a === "__single__" ? brl(node.__aVencer) : brl(node.__avByAging?.[a] || 0)}
               </div>
             ))
           )}
+
+          {/* ✅ TOTAL (por último) */}
+          <div style={{ ...cell, textAlign: "right", fontWeight: 900 }}>
+            {brl(node.__total)}
+          </div>
         </div>
 
-        {open && hasChildren ? node.childrenArr.map((c) => renderNode(c, depth + 1, [...path, c.label])) : null}
+        {open && hasChildren
+          ? node.childrenArr.map((c) => renderNode(c, depth + 1, [...path, c.label]))
+          : null}
       </React.Fragment>
     );
   }
 
+  // =========================
+  // UI
+  // =========================
   return (
     <div style={page}>
       <div style={topRow}>
         <div>
           <div style={title}>Contas a Pagar</div>
-          <div style={sub}>Vencido/A Vencer calculado por <b>Data Base</b>.</div>
+          <div style={sub}>Aging Contas a Pagar.</div>
         </div>
 
         <div style={controls}>
@@ -470,27 +454,14 @@ export default function ContasPagarDashboard() {
               </option>
             ))}
           </select>
-
-          {/* ✅ Filtro Data Base */}
-          <select value={dataBaseFilter} onChange={(e) => setDataBaseFilter(e.target.value)} style={selectSmall}>
-            <option value="">Data Base: Todas</option>
-            {dataBaseOptions.map((d) => (
-              <option key={d} value={d}>
-                Data Base: {d}
-              </option>
-            ))}
-          </select>
         </div>
       </div>
 
+      {/* KPIs */}
       <div style={kpiGrid}>
         <div style={kpiCard}>
           <div style={kpiLabel}>LINHAS</div>
-          <div style={kpiValue}>{filteredRows.length}</div>
-        </div>
-        <div style={kpiCard}>
-          <div style={kpiLabel}>TOTAL</div>
-          <div style={kpiValue}>{brl(totals.total)}</div>
+          <div style={kpiValue}>{rows.length}</div>
         </div>
         <div style={kpiCard}>
           <div style={{ ...kpiLabel, color: "#fecaca" }}>VENCIDO</div>
@@ -500,6 +471,32 @@ export default function ContasPagarDashboard() {
           <div style={{ ...kpiLabel, color: "#bbf7d0" }}>A VENCER</div>
           <div style={{ ...kpiValue, color: "#bbf7d0" }}>{brl(totals.av)}</div>
         </div>
+        <div style={kpiCard}>
+          <div style={kpiLabel}>TOTAL</div>
+          <div style={kpiValue}>{brl(totals.total)}</div>
+        </div>
+      </div>
+
+      {/* ✅ Botões de análise (tabs) abaixo dos KPIs */}
+      <div style={tabsRow}>
+        <button
+          type="button"
+          onClick={() => setView("estrutura")}
+          style={{ ...tabBtn, ...(view === "estrutura" ? tabBtnActive : null) }}
+        >
+          Aging por Estrutura
+        </button>
+
+        {/* reservado para você adicionar a próxima análise sem quebrar layout */}
+        <button
+          type="button"
+          onClick={() => setView("estrutura")}
+          style={{ ...tabBtn, opacity: 0.5, cursor: "not-allowed" }}
+          title="Próxima análise (vamos construir depois)"
+          disabled
+        >
+          (Em breve) Outra Análise
+        </button>
       </div>
 
       {err ? <div style={errBox}>{err}</div> : null}
@@ -513,7 +510,9 @@ export default function ContasPagarDashboard() {
             {renderHeader()}
             <div style={divider} />
 
-            {tree.length ? tree.map((n) => renderNode(n, 0, [n.label])) : (
+            {tree.length ? (
+              tree.map((n) => renderNode(n, 0, [n.label]))
+            ) : (
               <div style={{ padding: 16, color: "#9ca3af" }}>Sem dados para este projeto.</div>
             )}
           </div>
@@ -543,7 +542,7 @@ const sub = { marginTop: 6, color: "#9ca3af", fontSize: 13 };
 const controls = { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" };
 
 const select = {
-  minWidth: 320,
+  minWidth: 360,
   maxWidth: "70vw",
   padding: "10px 12px",
   borderRadius: 14,
@@ -554,13 +553,11 @@ const select = {
   outline: "none",
 };
 
-const selectSmall = { ...select, minWidth: 220 };
-
 const kpiGrid = {
   display: "grid",
   gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
   gap: 12,
-  marginBottom: 14,
+  marginBottom: 12,
 };
 
 const kpiCard = {
@@ -573,6 +570,22 @@ const kpiCard = {
 
 const kpiLabel = { fontSize: 12, color: "#9ca3af", letterSpacing: "0.14em", fontWeight: 900 };
 const kpiValue = { marginTop: 6, fontSize: 20, fontWeight: 950 };
+
+const tabsRow = { display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" };
+const tabBtn = {
+  border: "1px solid rgba(255,255,255,0.10)",
+  background: "rgba(0,0,0,0.30)",
+  color: "rgba(229,231,235,0.90)",
+  padding: "10px 12px",
+  borderRadius: 14,
+  fontWeight: 900,
+  cursor: "pointer",
+};
+const tabBtnActive = {
+  border: "1px solid rgba(245,198,63,0.45)",
+  background: "linear-gradient(135deg, rgba(245,198,63,0.16), rgba(0,0,0,0.45))",
+  boxShadow: "0 14px 35px rgba(245,198,63,0.08)",
+};
 
 const errBox = {
   padding: 12,
