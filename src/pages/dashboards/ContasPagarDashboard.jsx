@@ -23,6 +23,40 @@ function agingBucketLabel(aging) {
   return a.length ? a : "(sem aging)";
 }
 
+// ✅ Normaliza YYYY-MM-DD para comparar sem timezone
+function toISODateOnly(v) {
+  if (!v && v !== 0) return null;
+
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  if (typeof v === "string") {
+    const m = v.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (m) return m[1];
+  }
+
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return null;
+
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+// ✅ Status calculado por data_base (não hoje)
+function calcStatusByBaseDate({ dataVenc, dataBase, fallbackStatus }) {
+  const venc = toISODateOnly(dataVenc);
+  const base = toISODateOnly(dataBase);
+
+  if (!venc || !base) {
+    const s = String(fallbackStatus || "").trim().toUpperCase();
+    if (s.includes("VENC")) return STATUS_VENCIDO;
+    if (s.includes("A VENC")) return STATUS_A_VENCER;
+    return "SEM STATUS";
+  }
+
+  return venc < base ? STATUS_VENCIDO : STATUS_A_VENCER;
+}
+
 export default function ContasPagarDashboard() {
   const [user, setUser] = useState(null);
 
@@ -33,6 +67,9 @@ export default function ContasPagarDashboard() {
   const [err, setErr] = useState("");
 
   const [rows, setRows] = useState([]);
+
+  // ✅ Filtro Data Base
+  const [dataBaseFilter, setDataBaseFilter] = useState(""); // "" = todas
 
   // ✅ Aging por coluna (separado)
   const [openAgingVencido, setOpenAgingVencido] = useState(false);
@@ -88,13 +125,26 @@ export default function ContasPagarDashboard() {
         const { data, error } = await supabase
           .from("contas_pagar")
           .select(
-            "id, projeto_id, tipo, subtipo, grupo, classificacao, nat_financeira, favorecido, status, aging, valor, data_vencimento"
+            "id, projeto_id, tipo, subtipo, grupo, classificacao, nat_financeira, favorecido, status, aging, valor, data_vencimento, data_base"
           )
           .eq("projeto_id", projectId);
 
         if (error) throw error;
 
-        setRows(data || []);
+        const withCalc = (data || []).map((r) => ({
+          ...r,
+          __data_base_iso: toISODateOnly(r.data_base),
+          __status_calc: calcStatusByBaseDate({
+            dataVenc: r.data_vencimento,
+            dataBase: r.data_base,
+            fallbackStatus: r.status,
+          }),
+        }));
+
+        setRows(withCalc);
+
+        // ✅ reseta filtro quando trocar projeto
+        setDataBaseFilter("");
       } catch (e) {
         console.error(e);
         setErr(e.message || "Erro ao carregar contas a pagar.");
@@ -105,23 +155,43 @@ export default function ContasPagarDashboard() {
   }, [projectId]);
 
   // =========================
-  // Aging buckets por lado
+  // Lista de datas-base disponíveis
+  // =========================
+  const dataBaseOptions = useMemo(() => {
+    const vals = rows
+      .map((r) => r.__data_base_iso)
+      .filter(Boolean);
+    const unique = uniq(vals);
+    unique.sort((a, b) => (a < b ? 1 : -1)); // desc
+    return unique;
+  }, [rows]);
+
+  // =========================
+  // Rows filtradas por data_base
+  // =========================
+  const filteredRows = useMemo(() => {
+    if (!dataBaseFilter) return rows;
+    return rows.filter((r) => r.__data_base_iso === dataBaseFilter);
+  }, [rows, dataBaseFilter]);
+
+  // =========================
+  // Aging buckets por lado (baseado no status calculado)
   // =========================
   const agingBuckets = useMemo(() => {
     const venc = uniq(
-      rows
-        .filter((r) => String(r.status || "").toUpperCase() === STATUS_VENCIDO)
+      filteredRows
+        .filter((r) => r.__status_calc === STATUS_VENCIDO)
         .map((r) => agingBucketLabel(r.aging))
     ).sort();
 
     const av = uniq(
-      rows
-        .filter((r) => String(r.status || "").toUpperCase() === STATUS_A_VENCER)
+      filteredRows
+        .filter((r) => r.__status_calc === STATUS_A_VENCER)
         .map((r) => agingBucketLabel(r.aging))
     ).sort();
 
     return { vencido: venc, aVencer: av };
-  }, [rows]);
+  }, [filteredRows]);
 
   // =========================
   // Tree: Tipo -> ... -> Favorecido
@@ -136,7 +206,7 @@ export default function ContasPagarDashboard() {
       return map.get(keyLabel);
     }
 
-    for (const r of rows) {
+    for (const r of filteredRows) {
       const tipo = safeStr(r.tipo);
       const subtipo = safeStr(r.subtipo);
       const grupo = safeStr(r.grupo);
@@ -181,12 +251,8 @@ export default function ContasPagarDashboard() {
 
       const total = sum(allRows.map((x) => x.valor));
 
-      const vencRows = allRows.filter(
-        (x) => String(x.status || "").toUpperCase() === STATUS_VENCIDO
-      );
-      const avRows = allRows.filter(
-        (x) => String(x.status || "").toUpperCase() === STATUS_A_VENCER
-      );
+      const vencRows = allRows.filter((x) => x.__status_calc === STATUS_VENCIDO);
+      const avRows = allRows.filter((x) => x.__status_calc === STATUS_A_VENCER);
 
       const vencTotal = sum(vencRows.map((x) => x.valor));
       const avTotal = sum(avRows.map((x) => x.valor));
@@ -217,10 +283,10 @@ export default function ContasPagarDashboard() {
     }
 
     return mapToArr(root).map(withTotals);
-  }, [rows, agingBuckets]);
+  }, [filteredRows, agingBuckets]);
 
   // =========================
-  // Expand/Collapse single nodes
+  // Expand/Collapse
   // =========================
   function keyFor(pathArr) {
     return pathArr.join(" > ");
@@ -239,7 +305,7 @@ export default function ContasPagarDashboard() {
   }
 
   // =========================
-  // Grid columns (dependem de cada lado)
+  // Grid columns
   // =========================
   const gridCols = useMemo(() => {
     const vencOpen = openAgingVencido;
@@ -248,7 +314,6 @@ export default function ContasPagarDashboard() {
     const vencN = Math.max(agingBuckets.vencido.length, 1);
     const avN = Math.max(agingBuckets.aVencer.length, 1);
 
-    // Estrutura + Total + (Vencido: 1 ou N) + (A Vencer: 1 ou N)
     const vencCols = vencOpen ? `repeat(${vencN}, 180px)` : "180px";
     const avCols = avOpen ? `repeat(${avN}, 180px)` : "180px";
 
@@ -256,22 +321,14 @@ export default function ContasPagarDashboard() {
   }, [openAgingVencido, openAgingAVencer, agingBuckets]);
 
   // =========================
-  // Totais KPIs
+  // Totais KPIs (por filtro)
   // =========================
   const totals = useMemo(() => {
-    const total = sum(rows.map((r) => r.valor));
-    const venc = sum(
-      rows
-        .filter((r) => String(r.status || "").toUpperCase() === STATUS_VENCIDO)
-        .map((r) => r.valor)
-    );
-    const av = sum(
-      rows
-        .filter((r) => String(r.status || "").toUpperCase() === STATUS_A_VENCER)
-        .map((r) => r.valor)
-    );
+    const total = sum(filteredRows.map((r) => r.valor));
+    const venc = sum(filteredRows.filter((r) => r.__status_calc === STATUS_VENCIDO).map((r) => r.valor));
+    const av = sum(filteredRows.filter((r) => r.__status_calc === STATUS_A_VENCER).map((r) => r.valor));
     return { total, venc, av };
-  }, [rows]);
+  }, [filteredRows]);
 
   // =========================
   // Header + Rows render
@@ -279,13 +336,9 @@ export default function ContasPagarDashboard() {
   function renderHeader() {
     return (
       <div style={{ ...rowGrid, gridTemplateColumns: gridCols, ...headerRow }}>
-        <div style={{ ...cell, ...headCell, justifyContent: "flex-start" }}>
-          ESTRUTURA
-        </div>
-
+        <div style={{ ...cell, ...headCell, justifyContent: "flex-start" }}>ESTRUTURA</div>
         <div style={{ ...cell, ...headCell, textAlign: "right" }}>TOTAL</div>
 
-        {/* ✅ VENCIDO: clicável abre/fecha aging */}
         {!openAgingVencido ? (
           <button
             type="button"
@@ -295,32 +348,29 @@ export default function ContasPagarDashboard() {
           >
             VENCIDO
           </button>
-        ) : (
-          agingBuckets.vencido.length ? (
-            agingBuckets.vencido.map((a) => (
-              <button
-                key={`h-v-${a}`}
-                type="button"
-                onClick={() => setOpenAgingVencido(false)}
-                style={{ ...headBtn, color: "#fecaca" }}
-                title="Clique para fechar Aging do Vencido"
-              >
-                VENCIDO · {a}
-              </button>
-            ))
-          ) : (
+        ) : agingBuckets.vencido.length ? (
+          agingBuckets.vencido.map((a) => (
             <button
+              key={`h-v-${a}`}
               type="button"
               onClick={() => setOpenAgingVencido(false)}
               style={{ ...headBtn, color: "#fecaca" }}
               title="Clique para fechar Aging do Vencido"
             >
-              VENCIDO
+              VENCIDO · {a}
             </button>
-          )
+          ))
+        ) : (
+          <button
+            type="button"
+            onClick={() => setOpenAgingVencido(false)}
+            style={{ ...headBtn, color: "#fecaca" }}
+            title="Clique para fechar Aging do Vencido"
+          >
+            VENCIDO
+          </button>
         )}
 
-        {/* ✅ A VENCER: clicável abre/fecha aging */}
         {!openAgingAVencer ? (
           <button
             type="button"
@@ -330,29 +380,27 @@ export default function ContasPagarDashboard() {
           >
             A VENCER
           </button>
-        ) : (
-          agingBuckets.aVencer.length ? (
-            agingBuckets.aVencer.map((a) => (
-              <button
-                key={`h-a-${a}`}
-                type="button"
-                onClick={() => setOpenAgingAVencer(false)}
-                style={{ ...headBtn, color: "#bbf7d0" }}
-                title="Clique para fechar Aging do A Vencer"
-              >
-                A VENCER · {a}
-              </button>
-            ))
-          ) : (
+        ) : agingBuckets.aVencer.length ? (
+          agingBuckets.aVencer.map((a) => (
             <button
+              key={`h-a-${a}`}
               type="button"
               onClick={() => setOpenAgingAVencer(false)}
               style={{ ...headBtn, color: "#bbf7d0" }}
               title="Clique para fechar Aging do A Vencer"
             >
-              A VENCER
+              A VENCER · {a}
             </button>
-          )
+          ))
+        ) : (
+          <button
+            type="button"
+            onClick={() => setOpenAgingAVencer(false)}
+            style={{ ...headBtn, color: "#bbf7d0" }}
+            title="Clique para fechar Aging do A Vencer"
+          >
+            A VENCER
+          </button>
         )}
       </div>
     );
@@ -365,16 +413,10 @@ export default function ContasPagarDashboard() {
     return (
       <React.Fragment key={keyFor(path)}>
         <div style={{ ...rowGrid, gridTemplateColumns: gridCols, ...dataRow }}>
-          {/* Estrutura */}
           <div style={{ ...cell, justifyContent: "flex-start" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, paddingLeft: depth * 16 }}>
               {hasChildren ? (
-                <button
-                  type="button"
-                  onClick={() => toggleNode(path)}
-                  style={expanderBtn}
-                  aria-label={open ? "Recolher" : "Expandir"}
-                >
+                <button type="button" onClick={() => toggleNode(path)} style={expanderBtn} aria-label={open ? "Recolher" : "Expandir"}>
                   {open ? "▾" : "▸"}
                 </button>
               ) : (
@@ -384,65 +426,42 @@ export default function ContasPagarDashboard() {
             </div>
           </div>
 
-          {/* Total */}
-          <div style={{ ...cell, textAlign: "right", fontWeight: 900 }}>
-            {brl(node.__total)}
-          </div>
+          <div style={{ ...cell, textAlign: "right", fontWeight: 900 }}>{brl(node.__total)}</div>
 
-          {/* VENCIDO */}
           {!openAgingVencido ? (
-            <div style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#fecaca" }}>
-              {brl(node.__vencido)}
-            </div>
+            <div style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#fecaca" }}>{brl(node.__vencido)}</div>
           ) : (
             (agingBuckets.vencido.length ? agingBuckets.vencido : ["__single__"]).map((a) => (
-              <div
-                key={`${keyFor(path)}-v-${a}`}
-                style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#fecaca" }}
-              >
+              <div key={`${keyFor(path)}-v-${a}`} style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#fecaca" }}>
                 {a === "__single__" ? brl(node.__vencido) : brl(node.__vencByAging?.[a] || 0)}
               </div>
             ))
           )}
 
-          {/* A VENCER */}
           {!openAgingAVencer ? (
-            <div style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#bbf7d0" }}>
-              {brl(node.__aVencer)}
-            </div>
+            <div style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#bbf7d0" }}>{brl(node.__aVencer)}</div>
           ) : (
             (agingBuckets.aVencer.length ? agingBuckets.aVencer : ["__single__"]).map((a) => (
-              <div
-                key={`${keyFor(path)}-a-${a}`}
-                style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#bbf7d0" }}
-              >
+              <div key={`${keyFor(path)}-a-${a}`} style={{ ...cell, textAlign: "right", fontWeight: 900, color: "#bbf7d0" }}>
                 {a === "__single__" ? brl(node.__aVencer) : brl(node.__avByAging?.[a] || 0)}
               </div>
             ))
           )}
         </div>
 
-        {open && hasChildren
-          ? node.childrenArr.map((c) => renderNode(c, depth + 1, [...path, c.label]))
-          : null}
+        {open && hasChildren ? node.childrenArr.map((c) => renderNode(c, depth + 1, [...path, c.label])) : null}
       </React.Fragment>
     );
   }
 
-  // =========================
-  // UI
-  // =========================
   return (
     <div style={page}>
       <div style={topRow}>
         <div>
           <div style={title}>Contas a Pagar</div>
-          <div style={sub}>
-            Análise por hierarquia (Tipo → … → Favorecido). O Aging divide Vencido e A Vencer por buckets.
-          </div>
+          <div style={sub}>Vencido/A Vencer calculado por <b>Data Base</b>.</div>
         </div>
 
-        {/* ✅ Só o seletor de projeto */}
         <div style={controls}>
           <select value={projectId} onChange={(e) => setProjectId(e.target.value)} style={select}>
             {projects.map((p) => (
@@ -451,14 +470,23 @@ export default function ContasPagarDashboard() {
               </option>
             ))}
           </select>
+
+          {/* ✅ Filtro Data Base */}
+          <select value={dataBaseFilter} onChange={(e) => setDataBaseFilter(e.target.value)} style={selectSmall}>
+            <option value="">Data Base: Todas</option>
+            {dataBaseOptions.map((d) => (
+              <option key={d} value={d}>
+                Data Base: {d}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
-      {/* KPIs */}
       <div style={kpiGrid}>
         <div style={kpiCard}>
           <div style={kpiLabel}>LINHAS</div>
-          <div style={kpiValue}>{rows.length}</div>
+          <div style={kpiValue}>{filteredRows.length}</div>
         </div>
         <div style={kpiCard}>
           <div style={kpiLabel}>TOTAL</div>
@@ -479,18 +507,13 @@ export default function ContasPagarDashboard() {
 
       {!loading ? (
         <div style={card}>
-          {/* ✅ Nome ajustado */}
-          <div style={cardTitle}>Análise por Hierarquia (Tipo → Favorecido)</div>
-
-          {/* ✅ remove a linha explicativa (não renderiza) */}
+          <div style={cardTitle}>Aging Contas a Pagar</div>
 
           <div style={{ marginTop: 14 }}>
             {renderHeader()}
             <div style={divider} />
 
-            {tree.length ? (
-              tree.map((n) => renderNode(n, 0, [n.label]))
-            ) : (
+            {tree.length ? tree.map((n) => renderNode(n, 0, [n.label])) : (
               <div style={{ padding: 16, color: "#9ca3af" }}>Sem dados para este projeto.</div>
             )}
           </div>
@@ -520,7 +543,7 @@ const sub = { marginTop: 6, color: "#9ca3af", fontSize: 13 };
 const controls = { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" };
 
 const select = {
-  minWidth: 360,
+  minWidth: 320,
   maxWidth: "70vw",
   padding: "10px 12px",
   borderRadius: 14,
@@ -530,6 +553,8 @@ const select = {
   fontWeight: 850,
   outline: "none",
 };
+
+const selectSmall = { ...select, minWidth: 220 };
 
 const kpiGrid = {
   display: "grid",

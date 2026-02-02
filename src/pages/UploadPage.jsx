@@ -4,6 +4,19 @@ import { supabase } from "../lib/supabaseClient";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
 
+/**
+ * ✅ UploadPage atualizado com:
+ * - Leitura de XLSX escolhendo aba por indicador (ex.: Contas a Pagar -> "BD")
+ * - Upsert (sem duplicar) para: faturamento, contas_pagar e contas_receber
+ * - Hash de dedup separado por indicador (contas_pagar e contas_receber com business key robusta)
+ * - Parsing CSV com fallback de encoding (UTF-8 -> Latin-1) pra evitar “prévia em branco”
+ * - Preview e botão único de “Inserir/Atualizar (sem duplicar)” quando suportado
+ *
+ * ⚠️ Importante no Supabase:
+ * - Tabelas devem existir: faturamento, contas_pagar, contas_receber
+ * - Deve existir índice UNIQUE em (projeto_id, import_hash) em cada uma delas
+ */
+
 const INDICATORS = [
   { key: "faturamento", label: "Faturamento", accept: ".csv,.xlsx" },
   { key: "contas_pagar", label: "Contas a Pagar", accept: ".csv,.xlsx" },
@@ -21,18 +34,19 @@ const INDICATORS = [
 const PREVIEW_LIMIT = 20;
 const UPSERT_BATCH_SIZE = 500;
 
-// ✅ precisa existir índice único (projeto_id, import_hash) nas tabelas
+// ✅ precisa existir índice único (projeto_id, import_hash) nas tabelas:
 const FATURAMENTO_ON_CONFLICT = "projeto_id,import_hash";
 const CONTAS_PAGAR_ON_CONFLICT = "projeto_id,import_hash";
+const CONTAS_RECEBER_ON_CONFLICT = "projeto_id,import_hash";
 
-// ✅ aba preferida por indicador (quando XLSX)
+// ✅ aba preferida por indicador (XLSX)
 const SHEET_PREF_BY_INDICATOR = {
   contas_pagar: "BD",
-  // se no futuro faturamento vier em outra aba, você põe aqui também
-  // faturamento: "BD",
+  contas_receber: "BD",
+  // faturamento: "BD", // se um dia precisar
 };
 
-function UploadPage() {
+export default function UploadPage() {
   const [user, setUser] = useState(null);
 
   const [projects, setProjects] = useState([]);
@@ -60,6 +74,11 @@ function UploadPage() {
   // relatório
   const [rowsProcessed, setRowsProcessed] = useState(0);
   const [duplicatesRemoved, setDuplicatesRemoved] = useState(0);
+
+  const canUpsert = useMemo(
+    () => ["faturamento", "contas_pagar", "contas_receber"].includes(indicatorKey),
+    [indicatorKey]
+  );
 
   useEffect(() => {
     async function init() {
@@ -193,14 +212,11 @@ function UploadPage() {
   }
 
   function cleanStr(v) {
-    return String(v ?? "")
-      .trim()
-      .replace(/\s+/g, " ")
-      .toLowerCase();
+    return String(v ?? "").trim().replace(/\s+/g, " ").toLowerCase();
   }
 
   // ============================
-  // Hashes (dedup)
+  // Hashes (dedup) por indicador
   // ============================
 
   function makeImportHashFaturamento(row) {
@@ -220,7 +236,7 @@ function UploadPage() {
     return parts.join("|");
   }
 
-  // ✅ Contas a pagar: chave pode repetir, então usamos um “business key” mais robusto
+  // ✅ Contas a pagar: chave pode repetir
   function makeImportHashContasPagar(row) {
     const vencISO = toDateISO(row.data_de_vencimento);
     const emiISO = toDateISO(row.data_de_emissao);
@@ -243,7 +259,36 @@ function UploadPage() {
       cleanStr(row.exi_disp),
       cleanStr(row.status),
       cleanStr(toNumber(row.valor)),
-      cleanStr(row.chave), // entra, mas não depende só dele
+      cleanStr(row.chave),
+    ];
+
+    return parts.join("|");
+  }
+
+  // ✅ Contas a receber
+  function makeImportHashContasReceber(row) {
+    const vencISO = toDateISO(row.data_de_vencimento);
+    const emiISO = toDateISO(row.data_de_emissao);
+    const baseISO = toDateISO(row.data_base);
+
+    const parts = [
+      cleanStr(row.empresa_cedente),
+      cleanStr(row.sacado),
+      cleanStr(row.documento),
+      cleanStr(row.parcela),
+      cleanStr(row.amarracao),
+      cleanStr(vencISO),
+      cleanStr(emiISO),
+      cleanStr(baseISO),
+      cleanStr(row.portador),
+      cleanStr(row.operacao),
+      cleanStr(row.tipo),
+      cleanStr(row.subtipo),
+      cleanStr(row.grupo),
+      cleanStr(row.classificacao),
+      cleanStr(row.nat_financeira),
+      cleanStr(row.status),
+      cleanStr(toNumber(row.valor)),
     ];
 
     return parts.join("|");
@@ -260,24 +305,29 @@ function UploadPage() {
     const pref = SHEET_PREF_BY_INDICATOR[indicatorKey];
     if (!pref) return wb.Sheets[wb.SheetNames[0]];
 
-    // tenta match exato
     if (wb.Sheets[pref]) return wb.Sheets[pref];
 
-    // tenta case-insensitive
     const foundName = wb.SheetNames.find((n) => n.toLowerCase() === pref.toLowerCase());
     if (foundName && wb.Sheets[foundName]) return wb.Sheets[foundName];
 
-    // fallback
     return wb.Sheets[wb.SheetNames[0]];
+  }
+
+  function parseCsvWithEncoding(buf, encoding) {
+    const text = new TextDecoder(encoding).decode(buf);
+    const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
+    return (parsed.data || []).map(normalizeRowKeys);
   }
 
   async function parseFileFromBlob(blob, ext, indicatorKey) {
     const buf = await blob.arrayBuffer();
 
     if (ext === "csv") {
-      const text = new TextDecoder("utf-8").decode(buf);
-      const parsed = Papa.parse(text, { header: true, skipEmptyLines: true });
-      return (parsed.data || []).map(normalizeRowKeys);
+      try {
+        return parseCsvWithEncoding(buf, "utf-8");
+      } catch {
+        return parseCsvWithEncoding(buf, "iso-8859-1");
+      }
     }
 
     // xlsx
@@ -338,12 +388,11 @@ function UploadPage() {
       import_batch_id: batchId,
       import_hash,
 
-      // EMPRESA DO GRUPO vira projeto_id, então não salva aqui (a menos que você queira guardar também)
       documento: row.documento ? String(row.documento).trim() : null,
       favorecido: row.favorecido ? String(row.favorecido).trim() : null,
 
-      data_emissao: toDateISO(row.data_de_emissao), // pode null
-      data_vencimento: toDateISO(row.data_de_vencimento), // sempre vem
+      data_emissao: toDateISO(row.data_de_emissao),
+      data_vencimento: toDateISO(row.data_de_vencimento),
 
       parcela: row.parcela ? String(row.parcela).trim() : null,
       valor: toNumber(row.valor),
@@ -368,6 +417,53 @@ function UploadPage() {
     };
   }
 
+  // ✅✅✅ AQUI está a correção principal:
+  // - banco tem data_de_emissao / data_de_vencimento
+  // - então o payload precisa usar exatamente esses nomes
+  function mapRowToContasReceber(row, projetoId, batchId) {
+    const import_hash = makeImportHashContasReceber(row);
+
+    return {
+      projeto_id: projetoId,
+      import_batch_id: batchId,
+      import_hash,
+
+      empresa_cedente: row.empresa_cedente ? String(row.empresa_cedente).trim() : null,
+      documento: row.documento ? String(row.documento).trim() : null,
+      parcela: row.parcela ? String(row.parcela).trim() : null,
+      sacado: row.sacado ? String(row.sacado).trim() : null,
+
+      // ✅ nomes do banco:
+      data_de_emissao: toDateISO(row.data_de_emissao),
+      data_de_vencimento: toDateISO(row.data_de_vencimento),
+
+      amarracao: row.amarracao ? String(row.amarracao).trim() : null,
+      valor: toNumber(row.valor),
+
+      data_base: toDateISO(row.data_base),
+
+      portador: row.portador ? String(row.portador).trim() : null,
+      operacao: row.operacao ? String(row.operacao).trim() : null,
+      descricao: row.descricao ? String(row.descricao).trim() : null,
+
+      tipo: row.tipo ? String(row.tipo).trim() : null,
+      subtipo: row.subtipo ? String(row.subtipo).trim() : null,
+      grupo: row.grupo ? String(row.grupo).trim() : null,
+      classificacao: row.classificacao ? String(row.classificacao).trim() : null,
+      nat_financeira: row.nat_financeira ? String(row.nat_financeira).trim() : null,
+
+      exi_disp: row.exi_disp ? String(row.exi_disp).trim() : null,
+      cg: row.cg ? String(row.cg).trim() : null,
+
+      tipo_operacao: row.tipo_operacao ? String(row.tipo_operacao).trim() : null,
+      tipo_portador: row.tipo_portador ? String(row.tipo_portador).trim() : null,
+
+      status: row.status ? String(row.status).trim() : null,
+      dias: toNumber(row.dias),
+      aging: row.aging ? String(row.aging).trim() : null,
+    };
+  }
+
   // ============================
   // Upload -> Preview
   // ============================
@@ -387,12 +483,10 @@ function UploadPage() {
       const safeName = normalizeFilename(file.name);
       const path = `${projectId}/${indicatorKey}/${Date.now()}_${safeName}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from("uploads")
-        .upload(path, file, {
-          upsert: false,
-          contentType: file.type || "application/octet-stream",
-        });
+      const { error: uploadError } = await supabase.storage.from("uploads").upload(path, file, {
+        upsert: false,
+        contentType: file.type || "application/octet-stream",
+      });
 
       if (uploadError) {
         console.error(uploadError);
@@ -462,7 +556,7 @@ function UploadPage() {
   }
 
   // ============================
-  // Upserts (Faturamento / Contas a Pagar)
+  // Upserts
   // ============================
 
   async function handleUpsert() {
@@ -471,17 +565,13 @@ function UploadPage() {
     if (!user) return setErr("Você precisa estar logado.");
     if (!projectId) return setErr("Selecione um projeto.");
     if (!rows.length) return setErr("Sem linhas para inserir.");
-
-    const enabled = ["faturamento", "contas_pagar"].includes(indicatorKey);
-    if (!enabled) return setErr("Inserção automática ainda não está habilitada para este indicador.");
+    if (!canUpsert) return setErr("Inserção automática ainda não está habilitada para este indicador.");
 
     setLoading(true);
 
     try {
-      // 1) batch
       const batchId = await createImportBatch();
 
-      // 2) payload
       let payloadRaw = [];
       let onConflict = "";
       let tableName = "";
@@ -494,9 +584,13 @@ function UploadPage() {
         tableName = "contas_pagar";
         onConflict = CONTAS_PAGAR_ON_CONFLICT;
         payloadRaw = rows.map((r) => mapRowToContasPagar(r, projectId, batchId));
+      } else if (indicatorKey === "contas_receber") {
+        tableName = "contas_receber";
+        onConflict = CONTAS_RECEBER_ON_CONFLICT;
+        payloadRaw = rows.map((r) => mapRowToContasReceber(r, projectId, batchId));
       }
 
-      // 3) dedup dentro do payload
+      // dedup interno
       const dedupMap = new Map();
       for (const item of payloadRaw) dedupMap.set(item.import_hash, item);
       const payload = Array.from(dedupMap.values());
@@ -504,23 +598,21 @@ function UploadPage() {
       const removed = payloadRaw.length - payload.length;
       setDuplicatesRemoved(removed);
 
-      // 4) upsert em lotes
+      // upsert em lotes
       for (let i = 0; i < payload.length; i += UPSERT_BATCH_SIZE) {
         const chunk = payload.slice(i, i + UPSERT_BATCH_SIZE);
 
-        const { error } = await supabase
-          .from(tableName)
-          .upsert(chunk, { onConflict });
-
+        const { error } = await supabase.from(tableName).upsert(chunk, { onConflict });
         if (error) throw error;
 
         setRowsProcessed(Math.min(i + chunk.length, payload.length));
       }
 
-      setMsg(`Upsert concluído ✅ Processadas: ${payload.length} linhas (duplicadas removidas do arquivo: ${removed}).`);
+      setMsg(
+        `Upsert concluído ✅ Processadas: ${payload.length} linhas (duplicadas removidas do arquivo: ${removed}).`
+      );
       setStep("done");
 
-      // limpar input
       setFile(null);
       const input = document.getElementById("upload-file-input");
       if (input) input.value = "";
@@ -537,9 +629,7 @@ function UploadPage() {
       <header style={header}>
         <div>
           <h1 style={title}>Uploads</h1>
-          <p style={subtitle}>
-            Envie os arquivos por indicador e por projeto.
-          </p>
+          <p style={subtitle}>Envie os arquivos por indicador e por projeto.</p>
         </div>
       </header>
 
@@ -577,11 +667,13 @@ function UploadPage() {
                   </option>
                 ))}
               </select>
+
               <div style={hint}>
                 Formatos aceitos: <span style={hintStrong}>{indicator.accept}</span>
                 {indicator.disabled ? <span style={pillDisabled}>Futuro</span> : <span style={pillEnabled}>Ativo</span>}
               </div>
-              {indicatorKey === "contas_pagar" ? (
+
+              {["contas_pagar", "contas_receber"].includes(indicatorKey) ? (
                 <div style={hint}>
                   XLSX: vamos ler preferencialmente a aba <b>BD</b>.
                 </div>
@@ -597,6 +689,7 @@ function UploadPage() {
                 onChange={onChangeFile}
                 style={fileInput}
               />
+
               {file ? (
                 <div style={fileMeta}>
                   <div style={fileName}>{file.name}</div>
@@ -622,12 +715,12 @@ function UploadPage() {
 
                 <button
                   type="button"
-                  disabled={loading || !["faturamento", "contas_pagar"].includes(indicatorKey)}
+                  disabled={loading || !canUpsert}
                   onClick={handleUpsert}
                   style={{
                     ...button,
                     marginTop: "0.6rem",
-                    ...(loading || !["faturamento", "contas_pagar"].includes(indicatorKey) ? buttonDisabled : {}),
+                    ...(loading || !canUpsert ? buttonDisabled : {}),
                   }}
                 >
                   {loading ? "Inserindo..." : "Inserir / Atualizar (sem duplicar)"}
@@ -671,8 +764,8 @@ function UploadPage() {
             </button>
 
             <div style={note}>
-              <b>Obs:</b> o “Enviar arquivo” manda para o Storage e gera a prévia.  
-              Para gravar na tabela, use o botão “Inserir / Atualizar (sem duplicar)” na prévia.
+              <b>Obs:</b> “Enviar arquivo” manda para o Storage e gera a prévia. Para gravar na tabela, use “Inserir /
+              Atualizar (sem duplicar)” na prévia.
             </div>
           </form>
         </section>
@@ -687,9 +780,9 @@ function UploadPage() {
 
           <ul style={list}>
             <li style={li}>Use sempre o projeto correto antes de enviar.</li>
-            <li style={li}>Padronize nomes dos arquivos (ex.: 2025-12_contas_pagar.xlsx).</li>
-            <li style={li}>Se o XLSX tiver várias abas, garantimos “BD” em Contas a Pagar.</li>
-            <li style={li}>Os módulos marcados como “futuro” ficam bloqueados.</li>
+            <li style={li}>Padronize nomes (ex.: 2025-12_contas_pagar.xlsx).</li>
+            <li style={li}>Contas a Pagar/Receber: se XLSX, lê a aba “BD”.</li>
+            <li style={li}>Indicadores “futuro” ficam bloqueados.</li>
           </ul>
 
           <div style={divider} />
@@ -915,5 +1008,3 @@ const smallCard = {
 
 const smallTitle = { fontWeight: 700, marginBottom: "0.25rem" };
 const smallText = { color: "#9ca3af", fontSize: "0.86rem", lineHeight: 1.35 };
-
-export default UploadPage;
