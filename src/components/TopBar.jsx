@@ -1,5 +1,6 @@
 // src/components/TopBar.jsx
 import React from "react";
+import { MoreVertical } from "lucide-react";
 
 export default function TopBar({
   title = "XChange",
@@ -9,24 +10,22 @@ export default function TopBar({
   return (
     <div style={wrap}>
       <div style={left}>
-        <button type="button" onClick={onToggleMenu} style={iconBtn} aria-label="Abrir menu">
-          {/* ícone hamburguer */}
-          <span style={hambLine} />
-          <span style={{ ...hambLine, width: 16, opacity: 0.9 }} />
-          <span style={{ ...hambLine, width: 12, opacity: 0.8 }} />
+        <button
+          type="button"
+          onClick={onToggleMenu}
+          style={iconBtn}
+          aria-label="Abrir menu"
+          title="Menu"
+        >
+          <MoreVertical size={20} />
         </button>
 
         <div style={brand}>
-          <div style={logoBox}>
-            <span style={logoText}>x</span>
-          </div>
           <div style={brandText}>{title}</div>
         </div>
       </div>
 
-      <div style={right}>
-        {rightSlot}
-      </div>
+      <div style={right}>{rightSlot}</div>
     </div>
   );
 }
@@ -47,7 +46,6 @@ const wrap = {
 };
 
 const left = { display: "flex", alignItems: "center", gap: 10 };
-
 const right = { display: "flex", alignItems: "center", gap: 10 };
 
 const iconBtn = {
@@ -57,42 +55,17 @@ const iconBtn = {
   border: "1px solid rgba(255,255,255,0.10)",
   background: "rgba(0,0,0,0.35)",
   cursor: "pointer",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  gap: 4,
+  display: "grid",
+  placeItems: "center",
   boxShadow: "0 12px 32px rgba(0,0,0,0.55)",
-};
-
-const hambLine = {
-  display: "block",
-  width: 18,
-  height: 2,
-  borderRadius: 999,
-  background: "rgba(229,231,235,0.92)",
+  color: "rgba(229,231,235,0.92)",
 };
 
 const brand = { display: "flex", alignItems: "center", gap: 10 };
-
-const logoBox = {
-  width: 34,
-  height: 34,
-  borderRadius: 12,
-  border: "1px solid rgba(255,255,255,0.10)",
-  background: "rgba(0,0,0,0.35)",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-};
-
-const logoText = {
-  fontWeight: 900,
-  color: "rgba(245, 198, 63, 0.95)",
-  fontSize: 16,
-};
 
 const brandText = {
   fontWeight: 900,
   letterSpacing: "0.02em",
   color: "rgba(229,231,235,0.95)",
+  fontSize: 18,
 };

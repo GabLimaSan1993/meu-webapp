@@ -1,26 +1,39 @@
 // src/components/SidebarLayout.jsx
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import TopBar from "./TopBar";
 import { supabase } from "../lib/supabaseClient";
 
 export default function SidebarLayout({ children }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [dashOpen, setDashOpen] = useState(true);
+
   const nav = useNavigate();
   const location = useLocation();
 
-  const navItems = useMemo(
+  const mainNavItems = useMemo(
     () => [
       { label: "Início", to: "/app" },
       { label: "Status e Prospecção", to: "/projects/status" },
       { label: "Tarefas", to: "/tasks/manage" },
       { label: "Uploads", to: "/uploads" },
-      { label: "Faturamento", to: "/dashboards/faturamento" },
-      { label: "Contas a Pagar", to: "/dashboards/contas-pagar" },
-      { label: "Contas a Receber", to: "/dashboards/contas-receber" }, // ✅ NOVO
     ],
     []
   );
+
+  const dashboardItems = useMemo(
+    () => [
+      { label: "Faturamento", to: "/dashboards/faturamento" },
+      { label: "Contas a Pagar", to: "/dashboards/contas-pagar" },
+      { label: "Contas a Receber", to: "/dashboards/contas-receber" },
+    ],
+    []
+  );
+
+  // ✅ Deixa o drop aberto automaticamente quando estiver em /dashboards/...
+  useEffect(() => {
+    if (location.pathname.startsWith("/dashboards")) setDashOpen(true);
+  }, [location.pathname]);
 
   async function handleLogout() {
     await supabase.auth.signOut();
@@ -31,6 +44,8 @@ export default function SidebarLayout({ children }) {
     const p = location.pathname || "/";
     return p.length > 42 ? `${p.slice(0, 42)}…` : p;
   }, [location.pathname]);
+
+  const isDashRoute = location.pathname.startsWith("/dashboards");
 
   return (
     <div style={shell}>
@@ -48,13 +63,19 @@ export default function SidebarLayout({ children }) {
             <div style={drawerHeader}>
               <div style={drawerTitle}>Navegação</div>
 
-              <button type="button" style={closeBtn} onClick={() => setMenuOpen(false)}>
+              <button
+                type="button"
+                style={closeBtn}
+                onClick={() => setMenuOpen(false)}
+                aria-label="Fechar menu"
+              >
                 ✕
               </button>
             </div>
 
             <div style={drawerList}>
-              {navItems.map((it) => (
+              {/* itens principais */}
+              {mainNavItems.map((it) => (
                 <NavLink
                   key={it.to}
                   to={it.to}
@@ -67,6 +88,44 @@ export default function SidebarLayout({ children }) {
                   {it.label}
                 </NavLink>
               ))}
+
+              {/* ✅ Grupo Dashboards com drop */}
+              <button
+                type="button"
+                onClick={() => setDashOpen((v) => !v)}
+                style={{
+                  ...drawerItem,
+                  ...(isDashRoute ? drawerItemActive : null),
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                }}
+                aria-expanded={dashOpen}
+              >
+                <span>Dashboards</span>
+                <span style={{ opacity: 0.9, fontWeight: 900 }}>
+                  {dashOpen ? "▾" : "▸"}
+                </span>
+              </button>
+
+              {dashOpen ? (
+                <div style={subList}>
+                  {dashboardItems.map((it) => (
+                    <NavLink
+                      key={it.to}
+                      to={it.to}
+                      onClick={() => setMenuOpen(false)}
+                      style={({ isActive }) => ({
+                        ...subItem,
+                        ...(isActive ? subItemActive : null),
+                      })}
+                    >
+                      {it.label}
+                    </NavLink>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             <div style={drawerFooter}>
@@ -167,6 +226,32 @@ const drawerItemActive = {
   border: "1px solid rgba(245,198,63,0.45)",
   background: "linear-gradient(135deg, rgba(245,198,63,0.16), rgba(0,0,0,0.45))",
   boxShadow: "0 14px 35px rgba(245,198,63,0.08)",
+};
+
+/* ✅ subitens do drop */
+const subList = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 8,
+  paddingLeft: 10,
+  marginTop: 2,
+  marginBottom: 2,
+};
+
+const subItem = {
+  padding: "12px 12px",
+  borderRadius: 14,
+  border: "1px solid rgba(255,255,255,0.08)",
+  background: "rgba(0,0,0,0.26)",
+  color: "rgba(229,231,235,0.88)",
+  cursor: "pointer",
+  fontWeight: 850,
+  textDecoration: "none",
+};
+
+const subItemActive = {
+  border: "1px solid rgba(245,198,63,0.35)",
+  background: "linear-gradient(135deg, rgba(245,198,63,0.12), rgba(0,0,0,0.42))",
 };
 
 const drawerFooter = { marginTop: "auto", padding: 6 };
