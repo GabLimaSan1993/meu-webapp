@@ -1,17 +1,16 @@
 // src/components/SidebarLayout.jsx
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import TopBar from "./TopBar";
 import { supabase } from "../lib/supabaseClient";
 
 export default function SidebarLayout({ children }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const [dashOpen, setDashOpen] = useState(true);
-
+  const [dashOpen, setDashOpen] = useState(true); // dropdown dashboards
   const nav = useNavigate();
   const location = useLocation();
 
-  const mainNavItems = useMemo(
+  const navItems = useMemo(
     () => [
       { label: "Início", to: "/app" },
       { label: "Status e Prospecção", to: "/projects/status" },
@@ -26,14 +25,10 @@ export default function SidebarLayout({ children }) {
       { label: "Faturamento", to: "/dashboards/faturamento" },
       { label: "Contas a Pagar", to: "/dashboards/contas-pagar" },
       { label: "Contas a Receber", to: "/dashboards/contas-receber" },
+      { label: "Disponibilidade x MP", to: "/dashboards/disponibilidade-mp" }, // ✅ novo
     ],
     []
   );
-
-  // ✅ Deixa o drop aberto automaticamente quando estiver em /dashboards/...
-  useEffect(() => {
-    if (location.pathname.startsWith("/dashboards")) setDashOpen(true);
-  }, [location.pathname]);
 
   async function handleLogout() {
     await supabase.auth.signOut();
@@ -45,13 +40,15 @@ export default function SidebarLayout({ children }) {
     return p.length > 42 ? `${p.slice(0, 42)}…` : p;
   }, [location.pathname]);
 
-  const isDashRoute = location.pathname.startsWith("/dashboards");
+  const isDashActive = useMemo(() => {
+    const p = location.pathname || "";
+    return p.startsWith("/dashboards/");
+  }, [location.pathname]);
 
   return (
     <div style={shell}>
       <TopBar
         title="XChange"
-        subtitle="Painel do consultor"
         onToggleMenu={() => setMenuOpen(true)}
         rightSlot={<div style={pill}>{routePill}</div>}
       />
@@ -63,19 +60,13 @@ export default function SidebarLayout({ children }) {
             <div style={drawerHeader}>
               <div style={drawerTitle}>Navegação</div>
 
-              <button
-                type="button"
-                style={closeBtn}
-                onClick={() => setMenuOpen(false)}
-                aria-label="Fechar menu"
-              >
+              <button type="button" style={closeBtn} onClick={() => setMenuOpen(false)}>
                 ✕
               </button>
             </div>
 
             <div style={drawerList}>
-              {/* itens principais */}
-              {mainNavItems.map((it) => (
+              {navItems.map((it) => (
                 <NavLink
                   key={it.to}
                   to={it.to}
@@ -89,36 +80,32 @@ export default function SidebarLayout({ children }) {
                 </NavLink>
               ))}
 
-              {/* ✅ Grupo Dashboards com drop */}
+              {/* ✅ Dashboards (dropdown) */}
               <button
                 type="button"
                 onClick={() => setDashOpen((v) => !v)}
                 style={{
                   ...drawerItem,
-                  ...(isDashRoute ? drawerItemActive : null),
+                  ...(isDashActive ? drawerItemActive : null),
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
-                  gap: 10,
                 }}
-                aria-expanded={dashOpen}
               >
                 <span>Dashboards</span>
-                <span style={{ opacity: 0.9, fontWeight: 900 }}>
-                  {dashOpen ? "▾" : "▸"}
-                </span>
+                <span style={{ opacity: 0.85, fontWeight: 900 }}>{dashOpen ? "▾" : "▸"}</span>
               </button>
 
               {dashOpen ? (
-                <div style={subList}>
+                <div style={dashSubList}>
                   {dashboardItems.map((it) => (
                     <NavLink
                       key={it.to}
                       to={it.to}
                       onClick={() => setMenuOpen(false)}
                       style={({ isActive }) => ({
-                        ...subItem,
-                        ...(isActive ? subItemActive : null),
+                        ...dashSubItem,
+                        ...(isActive ? dashSubItemActive : null),
                       })}
                     >
                       {it.label}
@@ -220,6 +207,7 @@ const drawerItem = {
   cursor: "pointer",
   fontWeight: 850,
   textDecoration: "none",
+  textAlign: "left",
 };
 
 const drawerItemActive = {
@@ -228,30 +216,29 @@ const drawerItemActive = {
   boxShadow: "0 14px 35px rgba(245,198,63,0.08)",
 };
 
-/* ✅ subitens do drop */
-const subList = {
+const dashSubList = {
   display: "flex",
   flexDirection: "column",
   gap: 8,
   paddingLeft: 10,
   marginTop: 2,
-  marginBottom: 2,
 };
 
-const subItem = {
-  padding: "12px 12px",
+const dashSubItem = {
+  padding: "10px 12px",
   borderRadius: 14,
   border: "1px solid rgba(255,255,255,0.08)",
-  background: "rgba(0,0,0,0.26)",
+  background: "rgba(0,0,0,0.22)",
   color: "rgba(229,231,235,0.88)",
   cursor: "pointer",
-  fontWeight: 850,
+  fontWeight: 820,
   textDecoration: "none",
 };
 
-const subItemActive = {
-  border: "1px solid rgba(245,198,63,0.35)",
-  background: "linear-gradient(135deg, rgba(245,198,63,0.12), rgba(0,0,0,0.42))",
+const dashSubItemActive = {
+  border: "1px solid rgba(245,198,63,0.38)",
+  background: "linear-gradient(135deg, rgba(245,198,63,0.12), rgba(0,0,0,0.40))",
+  boxShadow: "0 12px 28px rgba(245,198,63,0.06)",
 };
 
 const drawerFooter = { marginTop: "auto", padding: 6 };

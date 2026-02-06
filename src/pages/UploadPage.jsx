@@ -1,30 +1,25 @@
 // src/pages/UploadPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import * as XLSX from "xlsx";
 import Papa from "papaparse";
 
 /**
- * ✅ UploadPage atualizado com:
- * - Leitura de XLSX escolhendo aba por indicador (ex.: Contas a Pagar -> "BD")
- * - Upsert (sem duplicar) para: faturamento, contas_pagar e contas_receber
- * - Hash de dedup separado por indicador (contas_pagar e contas_receber com business key robusta)
- * - Parsing CSV com fallback de encoding (UTF-8 -> Latin-1) pra evitar “prévia em branco”
- * - Preview e botão único de “Inserir/Atualizar (sem duplicar)” quando suportado
- *
- * ⚠️ Importante no Supabase:
- * - Tabelas devem existir: faturamento, contas_pagar, contas_receber
- * - Deve existir índice UNIQUE em (projeto_id, import_hash) em cada uma delas
+ * UploadPage:
+ * - Upload Storage + Preview
+ * - Upsert (sem duplicar) para: faturamento, contas_pagar, contas_receber, disponibilidade_mp
+ * - XLSX: Contas a Pagar/Receber preferindo aba "BD"
  */
 
 const INDICATORS = [
-  { key: "faturamento", label: "Faturamento", accept: ".csv,.xlsx" },
-  { key: "contas_pagar", label: "Contas a Pagar", accept: ".csv,.xlsx" },
-  { key: "contas_receber", label: "Contas a Receber", accept: ".csv,.xlsx" },
-  { key: "taxas", label: "Taxas", accept: ".csv,.xlsx" },
-  { key: "disp_mp", label: "Disponibilidade x Matéria Prima", accept: ".csv,.xlsx" },
-  { key: "estoque", label: "Estoque", accept: ".csv,.xlsx" },
-  { key: "fc_realizado", label: "Fluxo de Caixa Realizado", accept: ".csv,.xlsx,.ofx" },
+  { key: "faturamento", label: "Faturamento", accept: ".csv,.xlsx", dashboardPath: "/dashboards/faturamento" },
+  { key: "contas_pagar", label: "Contas a Pagar", accept: ".csv,.xlsx", dashboardPath: "/dashboards/contas-pagar" },
+  { key: "contas_receber", label: "Contas a Receber", accept: ".csv,.xlsx", dashboardPath: "/dashboards/contas-receber" },
+  { key: "taxas", label: "Taxas", accept: ".csv,.xlsx", disabled: true },
+  { key: "disp_mp", label: "Disponibilidade x Matéria Prima", accept: ".csv,.xlsx", dashboardPath: "/dashboards/disponibilidade-mp" },
+  { key: "estoque", label: "Estoque", accept: ".csv,.xlsx", disabled: true },
+  { key: "fc_realizado", label: "Fluxo de Caixa Realizado", accept: ".csv,.xlsx,.ofx", disabled: true },
   { key: "fc_projetado", label: "Fluxo de Caixa Projetado (futuro)", accept: ".csv,.xlsx", disabled: true },
   { key: "dre", label: "DRE (futuro)", accept: ".csv,.xlsx", disabled: true },
   { key: "balanco", label: "Balanço (futuro)", accept: ".csv,.xlsx", disabled: true },
@@ -38,15 +33,17 @@ const UPSERT_BATCH_SIZE = 500;
 const FATURAMENTO_ON_CONFLICT = "projeto_id,import_hash";
 const CONTAS_PAGAR_ON_CONFLICT = "projeto_id,import_hash";
 const CONTAS_RECEBER_ON_CONFLICT = "projeto_id,import_hash";
+const DISP_MP_ON_CONFLICT = "projeto_id,import_hash";
 
 // ✅ aba preferida por indicador (XLSX)
 const SHEET_PREF_BY_INDICATOR = {
   contas_pagar: "BD",
   contas_receber: "BD",
-  // faturamento: "BD", // se um dia precisar
 };
 
 export default function UploadPage() {
+  const nav = useNavigate();
+
   const [user, setUser] = useState(null);
 
   const [projects, setProjects] = useState([]);
@@ -76,7 +73,7 @@ export default function UploadPage() {
   const [duplicatesRemoved, setDuplicatesRemoved] = useState(0);
 
   const canUpsert = useMemo(
-    () => ["faturamento", "contas_pagar", "contas_receber"].includes(indicatorKey),
+    () => ["faturamento", "contas_pagar", "contas_receber", "disp_mp"].includes(indicatorKey),
     [indicatorKey]
   );
 
@@ -221,7 +218,6 @@ export default function UploadPage() {
 
   function makeImportHashFaturamento(row) {
     const dataISO = toDateISO(row.data_de_emissao);
-
     const parts = [
       cleanStr(dataISO),
       cleanStr(row.nf),
@@ -232,11 +228,9 @@ export default function UploadPage() {
       cleanStr(row.cfop),
       cleanStr(row.empresa_emissora),
     ];
-
     return parts.join("|");
   }
 
-  // ✅ Contas a pagar: chave pode repetir
   function makeImportHashContasPagar(row) {
     const vencISO = toDateISO(row.data_de_vencimento);
     const emiISO = toDateISO(row.data_de_emissao);
@@ -261,11 +255,9 @@ export default function UploadPage() {
       cleanStr(toNumber(row.valor)),
       cleanStr(row.chave),
     ];
-
     return parts.join("|");
   }
 
-  // ✅ Contas a receber
   function makeImportHashContasReceber(row) {
     const vencISO = toDateISO(row.data_de_vencimento);
     const emiISO = toDateISO(row.data_de_emissao);
@@ -290,7 +282,29 @@ export default function UploadPage() {
       cleanStr(row.status),
       cleanStr(toNumber(row.valor)),
     ];
+    return parts.join("|");
+  }
 
+  // ✅ Disponibilidade x MP (data + semana + mes)
+  function makeImportHashDispMp(row) {
+    const dataISO = toDateISO(row.data);
+    const parts = [
+      cleanStr(dataISO),
+      cleanStr(row.semana),
+      cleanStr(row.mes),
+      cleanStr(toNumber(row.saldo_anterior)),
+      cleanStr(toNumber(row.disponibilidade)),
+      cleanStr(toNumber(row.mp_prevista)),
+      cleanStr(toNumber(row.mp_prevista_percent)),
+      cleanStr(toNumber(row.captacao_fomento)),
+      cleanStr(toNumber(row.reserva_mp)),
+      cleanStr(toNumber(row.mp_prevista_tot)),
+      cleanStr(toNumber(row.realizado_mp)),
+      cleanStr(toNumber(row.amortizacao_fom)),
+      cleanStr(toNumber(row.realizado_tot)),
+      cleanStr(toNumber(row.realizado_mp_percent)),
+      cleanStr(toNumber(row.saldo)),
+    ];
     return parts.join("|");
   }
 
@@ -300,7 +314,6 @@ export default function UploadPage() {
     return data; // Blob
   }
 
-  // ✅ escolhe aba por indicador (XLSX)
   function pickWorksheet(wb, indicatorKey) {
     const pref = SHEET_PREF_BY_INDICATOR[indicatorKey];
     if (!pref) return wb.Sheets[wb.SheetNames[0]];
@@ -343,7 +356,6 @@ export default function UploadPage() {
 
   function mapRowToFaturamento(row, projetoId, batchId) {
     const import_hash = makeImportHashFaturamento(row);
-
     return {
       projeto_id: projetoId,
       import_batch_id: batchId,
@@ -382,7 +394,6 @@ export default function UploadPage() {
 
   function mapRowToContasPagar(row, projetoId, batchId) {
     const import_hash = makeImportHashContasPagar(row);
-
     return {
       projeto_id: projetoId,
       import_batch_id: batchId,
@@ -417,9 +428,6 @@ export default function UploadPage() {
     };
   }
 
-  // ✅✅✅ AQUI está a correção principal:
-  // - banco tem data_de_emissao / data_de_vencimento
-  // - então o payload precisa usar exatamente esses nomes
   function mapRowToContasReceber(row, projetoId, batchId) {
     const import_hash = makeImportHashContasReceber(row);
 
@@ -433,7 +441,6 @@ export default function UploadPage() {
       parcela: row.parcela ? String(row.parcela).trim() : null,
       sacado: row.sacado ? String(row.sacado).trim() : null,
 
-      // ✅ nomes do banco:
       data_de_emissao: toDateISO(row.data_de_emissao),
       data_de_vencimento: toDateISO(row.data_de_vencimento),
 
@@ -461,6 +468,44 @@ export default function UploadPage() {
       status: row.status ? String(row.status).trim() : null,
       dias: toNumber(row.dias),
       aging: row.aging ? String(row.aging).trim() : null,
+    };
+  }
+
+  // ✅ Disponibilidade x Matéria Prima -> public.disponibilidade_mp
+  function mapRowToDispMp(row, projetoId, batchId) {
+    // seus headers já estão vindo como:
+    // data, semana, mes, saldo_anterior, disponibilidade, mp_prevista, mp_prevista_percent,
+    // captacao_fomento, reserva_mp, mp_prevista_tot, realizado_mp, amortizacao_fom, realizado_tot,
+    // realizado_mp_percent, saldo
+    const import_hash = makeImportHashDispMp(row);
+
+    return {
+      projeto_id: projetoId,
+      import_batch_id: batchId,
+      import_hash,
+
+      data: toDateISO(row.data),
+      semana: row.semana === "" ? null : Number(row.semana) || null,
+      mes: row.mes ? String(row.mes).trim() : null,
+
+      saldo_anterior: toNumber(row.saldo_anterior),
+      disponibilidade: toNumber(row.disponibilidade),
+
+      mp_prevista: toNumber(row.mp_prevista),
+      mp_prevista_percent: toNumber(row.mp_prevista_percent),
+
+      captacao_fomento: toNumber(row.captacao_fomento),
+      reserva_mp: toNumber(row.reserva_mp),
+
+      mp_prevista_tot: toNumber(row.mp_prevista_tot),
+
+      realizado_mp: toNumber(row.realizado_mp),
+      amortizacao_fom: toNumber(row.amortizacao_fom),
+      realizado_tot: toNumber(row.realizado_tot),
+
+      realizado_mp_percent: toNumber(row.realizado_mp_percent),
+
+      saldo: toNumber(row.saldo),
     };
   }
 
@@ -588,9 +633,13 @@ export default function UploadPage() {
         tableName = "contas_receber";
         onConflict = CONTAS_RECEBER_ON_CONFLICT;
         payloadRaw = rows.map((r) => mapRowToContasReceber(r, projectId, batchId));
+      } else if (indicatorKey === "disp_mp") {
+        tableName = "disp_mp_v1";
+        onConflict = DISP_MP_ON_CONFLICT;
+        payloadRaw = rows.map((r) => mapRowToDispMp(r, projectId, batchId));
       }
 
-      // dedup interno
+      // dedup interno por import_hash
       const dedupMap = new Map();
       for (const item of payloadRaw) dedupMap.set(item.import_hash, item);
       const payload = Array.from(dedupMap.values());
@@ -608,9 +657,7 @@ export default function UploadPage() {
         setRowsProcessed(Math.min(i + chunk.length, payload.length));
       }
 
-      setMsg(
-        `Upsert concluído ✅ Processadas: ${payload.length} linhas (duplicadas removidas do arquivo: ${removed}).`
-      );
+      setMsg(`Upsert concluído ✅ Processadas: ${payload.length} linhas (duplicadas removidas do arquivo: ${removed}).`);
       setStep("done");
 
       setFile(null);
@@ -622,6 +669,10 @@ export default function UploadPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function goToDashboard() {
+    if (indicator?.dashboardPath) nav(indicator.dashboardPath);
   }
 
   return (
@@ -713,22 +764,30 @@ export default function UploadPage() {
                   {JSON.stringify(previewRows, null, 2)}
                 </pre>
 
-                <button
-                  type="button"
-                  disabled={loading || !canUpsert}
-                  onClick={handleUpsert}
-                  style={{
-                    ...button,
-                    marginTop: "0.6rem",
-                    ...(loading || !canUpsert ? buttonDisabled : {}),
-                  }}
-                >
-                  {loading ? "Inserindo..." : "Inserir / Atualizar (sem duplicar)"}
-                </button>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: "0.6rem" }}>
+                  <button
+                    type="button"
+                    disabled={loading || !canUpsert}
+                    onClick={handleUpsert}
+                    style={{
+                      ...button,
+                      ...(loading || !canUpsert ? buttonDisabled : {}),
+                    }}
+                  >
+                    {loading ? "Inserindo..." : "Inserir / Atualizar (sem duplicar)"}
+                  </button>
+
+                  {indicator?.dashboardPath ? (
+                    <button type="button" onClick={goToDashboard} style={buttonDash}>
+                      Ir para Dashboard
+                    </button>
+                  ) : null}
+                </div>
 
                 {rowsProcessed ? (
                   <div style={{ marginTop: "0.5rem", fontSize: "0.82rem", color: "#9ca3af" }}>
-                    Progresso: <b>{rowsProcessed}</b> / <b>{Math.max(rows.length - duplicatesRemoved, 0)}</b>
+                    Progresso: <b>{rowsProcessed}</b> /{" "}
+                    <b>{Math.max(rows.length - duplicatesRemoved, 0)}</b>
                   </div>
                 ) : null}
               </div>
@@ -756,7 +815,7 @@ export default function UploadPage() {
               type="submit"
               disabled={loading || indicator.disabled || !projectId}
               style={{
-                ...button,
+                ...buttonWide,
                 ...(loading || indicator.disabled || !projectId ? buttonDisabled : {}),
               }}
             >
@@ -949,7 +1008,6 @@ const fileName = { fontWeight: 650, fontSize: "0.9rem" };
 const fileSub = { color: "#9ca3af", fontSize: "0.8rem", marginTop: "0.15rem" };
 
 const button = {
-  marginTop: "0.1rem",
   padding: "0.78rem 0.9rem",
   borderRadius: "0.95rem",
   border: "1px solid rgba(209,213,219,0.45)",
@@ -958,6 +1016,28 @@ const button = {
   fontWeight: 750,
   cursor: "pointer",
   boxShadow: "0 12px 28px rgba(209,213,219,0.22)",
+};
+
+const buttonDash = {
+  padding: "0.78rem 0.9rem",
+  borderRadius: "0.95rem",
+  border: "1px solid rgba(245,198,63,0.45)",
+  background: "linear-gradient(135deg, rgba(245,198,63,0.16), rgba(0,0,0,0.45))",
+  color: "rgba(245, 198, 63, 0.95)",
+  fontWeight: 900,
+  cursor: "pointer",
+  boxShadow: "0 14px 35px rgba(245,198,63,0.08)",
+};
+
+const buttonWide = {
+  marginTop: "0.1rem",
+  padding: "0.95rem 0.9rem",
+  borderRadius: "0.95rem",
+  border: "1px solid rgba(209,213,219,0.30)",
+  background: "linear-gradient(180deg, #f3f4f6, #d1d5db)",
+  color: "#0b0b0b",
+  fontWeight: 800,
+  cursor: "pointer",
 };
 
 const buttonDisabled = {

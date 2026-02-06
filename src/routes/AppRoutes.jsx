@@ -20,6 +20,7 @@ import SidebarLayout from "../components/SidebarLayout";
 import FaturamentoDashboard from "../pages/dashboards/FaturamentoDashboard";
 import ContasPagarDashboard from "../pages/dashboards/ContasPagarDashboard";
 import ContasReceberDashboard from "../pages/dashboards/ContasReceberDashboard";
+import DisponibilidadeMPDashboard from "../pages/dashboards/DisponibilidadeMPDashboard";
 
 /* =========================
    ROTA PROTEGIDA
@@ -163,13 +164,25 @@ export default function AppRoutes() {
           }
         />
 
-        {/* ✅ DASHBOARD CONTAS A RECEBER */}
+        {/* DASHBOARD CONTAS A RECEBER */}
         <Route
           path="/dashboards/contas-receber"
           element={
             <ProtectedRoute>
               <SidebarLayout>
                 <ContasReceberDashboard />
+              </SidebarLayout>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* ✅ NOVO: DISPONIBILIDADE x MATÉRIA PRIMA */}
+        <Route
+          path="/dashboards/disponibilidade-mp"
+          element={
+            <ProtectedRoute>
+              <SidebarLayout>
+                <DisponibilidadeMPDashboard />
               </SidebarLayout>
             </ProtectedRoute>
           }
